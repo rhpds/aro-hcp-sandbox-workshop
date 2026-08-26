@@ -114,8 +114,20 @@ approval_checklist:
     prerequisites_verifiable: false
     assessment_strategy: ""
     catalog_gap: ""
-    design_overview: ""
-    module_summaries: []
+    design_overview: "This 2-hour advanced lab for Field Engineers, Solution Architects, and Consultants teaches ARO HCP's managed control plane model and OpenShift Sandboxed Containers' kernel-level workload isolation in a single customer story. Participants verify the absence of customer-managed master infrastructure, scale NodePools, install and troubleshoot the Sandboxed Containers operator, and then prove hard multi-tenancy isolation through live kernel version comparison, cross-tenant /proc inspection, and host-escape attempts absorbed by the Kata guest VM."
+    module_summaries:
+      - title: "Introduction, Pre-flight & Cluster Resource Group"
+        overview: "Participants use the Azure CLI to inspect the lab resource group and confirm the absence of master VMs, etcd disks, and control plane load balancers, making the managed control plane model concrete through a live resource count. They then examine the Managed Identity and Workload Identity bindings that replace static credentials and satisfy FSI and government compliance requirements."
+      - title: "Where Is the Control Plane? HyperShift CRDs + NodePool Scaling"
+        overview: "Participants inspect the HostedCluster CRD and confirm control plane namespaces are empty, then learn the operational boundary: everything above NodePool is Red Hat's responsibility, everything below is the customer's. They scale the worker NodePool and trace the resulting Azure VM creation through the Kubernetes declarative API, cross-referencing the Azure CLI to connect the Kubernetes action to its cloud consequence."
+      - title: "Kata-Dedicated NodePool & Sandboxed Containers Operator"
+        overview: "Participants create a Kata-dedicated NodePool using Standard_D4s_v5 VMs (the minimum SKU for nested virtualization), reviewing the node label and NoSchedule taint that isolate Kata workloads. While the NodePool provisions, they install the Sandboxed Containers operator and learn its three managed resources: KataConfig, RuntimeClass, and PeerPodConfig."
+      - title: "Install Kata, Break It, Fix It"
+        overview: "Participants apply KataConfig with careful attention to the kataConfigPoolSelector, watch the MachineConfigPool update cycle in real time, and verify the kata RuntimeClass at both the cluster and containerd layers. They then deliberately trigger the most common field failure — a Forbidden admission error on a kata pod without SCC configuration — and trace and fix it using pod events and oc adm policy who-can."
+      - title: "Proving Isolation: Kernel, Process, and Tenant Boundaries"
+        overview: "Participants run a three-way kernel version comparison (host, runc pod, kata pod) to produce empirical proof of isolation, then reinforce it through /proc process visibility. They run two tenant kata pods on the same node, attempt cross-tenant secret inspection from Tenant A, and repeat the same inspection with runc tenants — seeing both results side-by-side to make hard versus soft multi-tenancy immediately concrete."
+      - title: "Build Pipeline — Host Escape Attempt"
+        overview: "Participants deploy a build pod under kata and execute two host-escape attempts — a sysrq-trigger and a kernel module load targeting the host filesystem — both absorbed by the guest VM, leaving all nodes Ready. The module closes with a field-ready decision tree: when to recommend kata, when not to, and three discovery questions for a customer meeting."
     rcars_overlap_pct: 80
     rcars_top_matches:
       - title: "Understanding Confidential Containers - Workshop on ARO"
