@@ -116,8 +116,24 @@ approval_checklist:
     catalog_gap: ""
     design_overview: ""
     module_summaries: []
-    rcars_overlap_pct: null
-    rcars_top_matches: []
+    rcars_overlap_pct: 80
+    rcars_top_matches:
+      - title: "Understanding Confidential Containers - Workshop on ARO"
+        ci_name: "azure-gpte.ocp4-sandbox-workshop-on-aro.prod"
+        url: "https://catalog.demo.redhat.com/catalog?item=azure-gpte.ocp4-sandbox-workshop-on-aro.prod"
+        relevance_score: 80
+        why_it_fits: "Runs on ARO and uses the OpenShift Sandboxed Containers operator with Kata Containers and peer-pods on Azure, overlapping on OSC operator, KataConfig, and isolation troubleshooting."
+      - title: "Hands-on lab with Red Hat OpenShift Platform Plus (2025)"
+        ci_name: "sandboxes-gpte.opp-hol.prod"
+        url: "https://catalog.demo.redhat.com/catalog?item=sandboxes-gpte.opp-hol.prod"
+        relevance_score: 58
+        why_it_fits: "Includes HyperShift and admission controller content relevant to SAs and FEs."
+      - title: "Using Hosted Control Planes for OpenShift on OpenShift"
+        ci_name: "openshift-cnv.hcp-ocp-virt-cnv.prod"
+        url: "https://catalog.demo.redhat.com/catalog?item=openshift-cnv.hcp-ocp-virt-cnv.prod"
+        relevance_score: 53
+        why_it_fits: "Covers HostedCluster CRDs and NodePool scaling hands-on, overlapping with the HCP architecture objectives."
+    catalog_gap: "No existing lab pairs ARO HCP control plane verification with Sandboxed Containers kernel isolation. The closest match covers Kata on ARO via Confidential Containers attestation — a different security model. This design is the only one that proves isolation through nested-virt Kata and live host-escape simulation in a 2-hour format targeted at Field Engineers and SAs."
     rejections: []
 
   infra:
