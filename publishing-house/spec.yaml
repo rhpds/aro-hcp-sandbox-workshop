@@ -54,21 +54,21 @@ spec:
       duration_min: 20
       status: not_started
   environment:
-    platform: ""               # ocp | rhel-vms — determines which sizing fields apply
-    topology: ""               # shared-cluster | per-student | cnv-pool
-    cloud_provider: cnv        # cnv | aws | troshka — cnv is default
+    platform: "ocp"            # ocp | rhel-vms — determines which sizing fields apply
+    topology: "per-student"    # shared-cluster | per-student | cnv-pool
+    cloud_provider: "azure"    # cnv | aws | troshka — azure (ARO HCP); requires infra review
     max_concurrent_users: null # required if topology = shared-cluster
 
     # --- OCP-specific fields (only when platform = ocp) ---
-    ocp_version: ""                    # e.g. 4.20 — minimum 4.20; leave empty for rhel-vms
-    cluster_type: ""                   # sno | multinode — only for platform = ocp
-    control_plane_instance_count: null # 1 if sno, 3 if multinode
-    control_plane_cpu: null            # 32 if sno, 16 if multinode
-    control_plane_ram_gb: null         # 128 if sno, 64 if multinode
-    worker_count: null                 # number of OCP worker nodes
-    worker_cpu: null                   # vCPU per worker
-    worker_ram_gb: null                # RAM per worker in GB
-    worker_disk_gb: null               # disk per worker in GB
+    ocp_version: "5"                   # e.g. 4.20 — minimum 4.20; leave empty for rhel-vms
+    cluster_type: "multinode"          # sno | multinode — only for platform = ocp
+    control_plane_instance_count: null # managed by Red Hat (HCP model)
+    control_plane_cpu: null            # managed by Red Hat (HCP model)
+    control_plane_ram_gb: null         # managed by Red Hat (HCP model)
+    worker_count: 3                    # 2 default NodePool + 1 Kata-dedicated NodePool
+    worker_cpu: 4                      # Standard_D4s_v5
+    worker_ram_gb: 16                  # Standard_D4s_v5
+    worker_disk_gb: 128                # OS disk per worker
 
     # --- VM-specific fields (only when platform = rhel-vms) ---
     # Each entry: {role, count, cpu, ram_gb, disk_gb, os}
@@ -76,13 +76,15 @@ spec:
 
     # --- Common fields (both platforms) ---
     aap_version: ""                    # required if AAP in products
-    ai_requirement: ""                 # maas | gpu | none
+    ai_requirement: "none"             # maas | gpu | none
     ai_model_tier: ""                  # open-source | frontier (if ai_requirement = maas or gpu)
     ai_model_name: ""                  # specific model e.g. granite-3.1-8b
     ai_justification: ""               # required if ai_model_tier = frontier or ai_requirement = gpu
     non_ga_products: []                # list of non-GA products/versions
     non_ga_access_plan: ""             # how access is provided for non-GA products
-    external_services: []              # named external service dependencies e.g. [github.com]
+    external_services:
+      - quay.io
+      - management.azure.com
     gpu_nodes: 0                       # number of GPU nodes (0 = none)
     gpu_type: ""                       # e.g. NVIDIA A100 40GB (required if gpu_nodes > 0)
   duration_hours: 2
