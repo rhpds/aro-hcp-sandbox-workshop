@@ -114,7 +114,7 @@ approval_checklist:
 
   content:
     prerequisites_verifiable: false
-    assessment_strategy: ""
+    assessment_strategy: "Trust-based. Each module ends with a verification step where participants confirm expected state (kata RuntimeClass present, CSV at Succeeded, kernel versions differ between runc and kata pods) before moving on. No automated solve/validate buttons."
     catalog_gap: ""
     design_overview: "This 2-hour advanced lab for Field Engineers, Solution Architects, and Consultants teaches ARO HCP's managed control plane model and OpenShift Sandboxed Containers' kernel-level workload isolation in a single customer story. Participants verify the absence of customer-managed master infrastructure, scale NodePools, install and troubleshoot the Sandboxed Containers operator, and then prove hard multi-tenancy isolation through live kernel version comparison, cross-tenant /proc inspection, and host-escape attempts absorbed by the Kata guest VM."
     module_summaries:
