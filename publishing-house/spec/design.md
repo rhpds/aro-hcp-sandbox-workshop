@@ -63,7 +63,7 @@ Advanced
 
 ## Environment
 
-**Learner view:** Each participant has a dedicated ARO HCP cluster provisioned before the lab starts. The cluster has a default runc NodePool running. No control plane VMs are visible in the Azure resource group — the hosted control plane runs in Red Hat's management infrastructure. Participants use both `oc` CLI and Azure CLI throughout the lab.
+**Learner view:** Each participant has a dedicated ARO HCP cluster pre-provisioned. No control plane VMs are visible in the Azure resource group. Participants use both `oc` and Azure CLI throughout.
 
 **Automation needed:** Yes
 - Provision a per-student ARO HCP cluster with a default runc NodePool
