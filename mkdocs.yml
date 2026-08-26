@@ -1,0 +1,14 @@
+site_name: 'ARO HCP and OpenShift Sandboxed Containers: Control Plane and Kernel Isolation'
+docs_dir: publishing-house/spec
+nav:
+- Home: index.md
+- Design Spec: design.md
+- Modules:
+  - Module 0 - Intro Preflight: modules/module-00-intro-preflight.md
+  - Module 1 - Control Plane Nodepool: modules/module-01-control-plane-nodepool.md
+  - Module 2 - Kata Nodepool Operator: modules/module-02-kata-nodepool-operator.md
+  - Module 3 - Install Kata Break Fix: modules/module-03-install-kata-break-fix.md
+  - Module 4 - Proving Isolation: modules/module-04-proving-isolation.md
+  - Module 5 - Host Escape: modules/module-05-host-escape.md
+plugins:
+- techdocs-core
