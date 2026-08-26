@@ -1,0 +1,35 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: aro-hcp-sandbox-workshop
+  title: aro-hcp-sandbox-workshop
+  description: A hands-on lab in which attendees learn about ARO HCP's managed
+    control plane model and prove OpenShift Sandboxed Containers' kernel-level
+    pod isolation through live host-escape simulations.
+  annotations:
+    ph.rhdp.io/content-type: lab
+    ph.rhdp.io/deployment-mode: rhdp_published
+    ph.rhdp.io/github-user: gmidha1
+    ph.rhdp.io/owner: gmidha@redhat.com
+    backstage.io/techdocs-ref: dir:.
+    github.com/project-slug: rhpds/aro-hcp-sandbox-workshop
+    ph.rhdp.io/created-at: 2026-08-26T14:17:05.968Z
+  tags:
+    - publishing-house
+    - lab
+    - rhdp-published
+  links:
+    - url: https://github.com/rhpds/aro-hcp-sandbox-workshop
+      title: Repository
+      icon: github
+    - url: https://devspaces.apps.ocpv-infra02.wdc07.infra.demo.redhat.com#https://github.com/rhpds/aro-hcp-sandbox-workshop
+      title: Open in DevSpaces
+      icon: catalog
+    - url: https://central-api-publishing-house.apps.ocpv-infra02.wdc07.infra.demo.redhat.com
+      title: Central
+      icon: dashboard
+spec:
+  type: content
+  lifecycle: experimental
+  owner: rhdp-team
+  system: publishing-house
