@@ -20,9 +20,39 @@ project:
   workflow_id: "932bfe41-5632-4c57-b7cb-222b7357c153"
 
 spec:
-  title: ""
-  learning_objectives: []
-  modules: []              # [{id, title, duration_min}] — written by intake Phase 4; id is stable (e.g. module-01)
+  title: "ARO HCP and OpenShift Sandboxed Containers: Control Plane and Kernel Isolation"
+  learning_objectives:
+    - "Verify ARO HCP's managed control plane model by inspecting the Azure resource group and confirming the absence of customer-managed master VMs, etcd disks, and control plane load balancers"
+    - "Scale a worker NodePool and trace the resulting Azure VM provisioning through the Kubernetes declarative API"
+    - "Deploy OpenShift Sandboxed Containers on a Kata-dedicated NodePool, including operator installation and KataConfig configuration"
+    - "Troubleshoot Sandboxed Containers admission failures using pod events and oc adm policy who-can"
+    - "Prove kernel-level isolation between runc and kata pods through live kernel version comparison and cross-tenant /proc inspection"
+    - "Demonstrate host-escape containment by executing sysrq trigger and kernel module load attempts inside a kata workload"
+  modules:
+    - id: module-00
+      title: "Introduction, Pre-flight & Cluster Resource Group"
+      duration_min: 20
+      status: not_started
+    - id: module-01
+      title: "Where Is the Control Plane? HyperShift CRDs + NodePool Scaling"
+      duration_min: 20
+      status: not_started
+    - id: module-02
+      title: "Kata-Dedicated NodePool & Sandboxed Containers Operator"
+      duration_min: 20
+      status: not_started
+    - id: module-03
+      title: "Install Kata, Break It, Fix It"
+      duration_min: 20
+      status: not_started
+    - id: module-04
+      title: "Proving Isolation: Kernel, Process, and Tenant Boundaries"
+      duration_min: 20
+      status: not_started
+    - id: module-05
+      title: "Build Pipeline — Host Escape Attempt"
+      duration_min: 20
+      status: not_started
   environment:
     platform: ""               # ocp | rhel-vms — determines which sizing fields apply
     topology: ""               # shared-cluster | per-student | cnv-pool
@@ -55,8 +85,8 @@ spec:
     external_services: []              # named external service dependencies e.g. [github.com]
     gpu_nodes: 0                       # number of GPU nodes (0 = none)
     gpu_type: ""                       # e.g. NVIDIA A100 40GB (required if gpu_nodes > 0)
-  duration_hours: null
-  audience: ""               # beginner | intermediate | advanced
+  duration_hours: 2
+  audience: "advanced"               # beginner | intermediate | advanced
 
 development:
   automation:
@@ -81,7 +111,7 @@ tracking:
 approval_checklist:
 
   content:
-    prerequisites_verifiable: null
+    prerequisites_verifiable: false
     assessment_strategy: ""
     catalog_gap: ""
     design_overview: ""
