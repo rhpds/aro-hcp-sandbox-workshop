@@ -56,7 +56,7 @@ spec:
   environment:
     platform: "ocp"            # ocp | rhel-vms — determines which sizing fields apply
     topology: "per-student"    # shared-cluster | per-student | cnv-pool
-    cloud_provider: "troshka"  # placeholder — actual provider is azure (ARO HCP); update when policy adds azure
+    cloud_provider: "aro"  # placeholder — actual provider is azure (ARO HCP); update when policy adds azure
     max_concurrent_users: null # required if topology = shared-cluster
 
     # --- OCP-specific fields (only when platform = ocp) ---
