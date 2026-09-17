@@ -28,6 +28,9 @@ This opening module frames the lab's customer story: how ARO HCP's managed contr
 
 1. Listen to the instructor's overview covering what ARO HCP is, what Sandboxed Containers is, and how the two technologies combine into a single customer story for regulated industries.
 2. Open a terminal and confirm that the Azure CLI is authenticated and targeting the correct subscription for your lab environment.
+'''
+az account show --output table
+'''
 3. Run `az resource list --resource-group <lab-resource-group> --output table` to list all resources in your assigned resource group.
 4. Identify the worker VM entries in the output and note their names.
 5. Confirm the absence of master VMs by filtering for VM resources and verifying that none have a master or control-plane naming pattern.
