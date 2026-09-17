@@ -36,9 +36,9 @@ This opening module frames the lab's customer story: how ARO HCP's managed contr
     **Expected Output:**
 
     ```text
-    EnvironmentName    HomeTenantId                          IsDefault    Name         State    TenantDefaultDomain      TenantDisplayName    TenantId
------------------  ------------------------------------  -----------  -----------  -------  -----------------------  -------------------  ------------------------------------
-AzureCloud         64dc69e4-d083-49fc-9569-ebece1dd1408  True         pool-01-316  Enabled  redhat0.onmicrosoft.com  Red Hat, Inc         64dc69e4-d083-49fc-9569-ebece1dd1408    
+    | EnvironmentName | HomeTenantId | IsDefault | Name | State | TenantDefaultDomain | TenantDisplayName | TenantId |
+    | --- | --- | --- | --- | --- | --- | --- | --- |
+    | AzureCloud | 64dc69e4-d083-49fc-9569-ebece1dd1408 | True | pool-01-316 | Enabled | redhat0.onmicrosoft.com | Red Hat, Inc | 64dc69e4-d083-49fc-9569-ebece1dd1408 |
     ```
 
 3. Run `az resource list --resource-group <lab-resource-group> --output table` to list all resources in your assigned resource group.
