@@ -41,7 +41,12 @@ This opening module frames the lab's customer story: how ARO HCP's managed contr
     | AzureCloud      | 64dc69e4-d083-49fc-9569-ebece1dd1408 | True      | pool-01-316 | Enabled | redhat0.onmicrosoft.com | Red Hat, Inc      | 64dc69e4-d083-49fc-9569-ebece1dd1408 |
     ```
 
-3. Run `az resource list --resource-group <lab-resource-group> --output table` to list all resources in your assigned resource group.
+3. Run this command to list all resources in your assigned resource group.
+   
+    ```bash
+    az resource list --resource-group $CUSTOMER_RG_NAME --output table
+    ```
+
 4. Identify the worker VM entries in the output and note their names.
 5. Confirm the absence of master VMs by filtering for VM resources and verifying that none have a master or control-plane naming pattern.
 6. Confirm the absence of etcd disks by filtering for disk resources and verifying that no etcd-labelled disks are present.
