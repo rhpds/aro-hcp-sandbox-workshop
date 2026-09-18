@@ -62,6 +62,17 @@ This opening module frames the lab's customer story: how ARO HCP's managed contr
     ```
 
 5. Confirm the absence of master VMs by filtering for VM resources and verifying that none have a master or control-plane naming pattern.
+   
+    ```bash
+    oc get nodes -l node-role.kubernetes.io/control-plane,node-role.kubernetes.io/master
+    ```
+
+    **Expected Output:**
+
+    ```text
+    No resources found
+    ```
+
 6. Confirm the absence of etcd disks by filtering for disk resources and verifying that no etcd-labelled disks are present.
 7. Confirm the absence of control plane load balancers by filtering for load balancer resources and verifying none are associated with the API server endpoint.
 8. Perform the impact calculation: given 15 clusters, note that the managed control plane model eliminates 45 master VMs (3 per cluster) from customer-managed infrastructure.
