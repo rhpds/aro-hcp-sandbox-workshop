@@ -44,7 +44,7 @@ This opening module frames the lab's customer story: how ARO HCP's managed contr
 3. Run this command to list all resources in your assigned resource group.
    
     ```bash
-    az resource list --resource-group $CUSTOMER_RG_NAME --output table
+    az resource list --resource-group $RESOURCE_GROUP --output table
     ```
 
 4. Identify the worker nodes using this command.
@@ -86,6 +86,17 @@ This opening module frames the lab's customer story: how ARO HCP's managed contr
     ```
 
 7. Confirm the absence of control plane load balancers by filtering for load balancer resources and verifying none are associated with the API server endpoint.
+
+    ```bash
+    az network lb list --resource-group $RESOURCE_GROUP --query "[?contains(name, 'api') || contains(name, 'control-plane')].name" --output json
+    ```
+    
+    **Expected Output:**
+
+   ```text
+    []
+    ```
+
 8. Perform the impact calculation: given 15 clusters, note that the managed control plane model eliminates 45 master VMs (3 per cluster) from customer-managed infrastructure.
 9. Locate the Managed Identity resource in the resource group output and note its name.
 10. Run `az identity show --resource-group <lab-resource-group> --name <managed-identity-name>` to examine the Managed Identity configuration.
