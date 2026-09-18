@@ -47,7 +47,20 @@ This opening module frames the lab's customer story: how ARO HCP's managed contr
     az resource list --resource-group $CUSTOMER_RG_NAME --output table
     ```
 
-4. Identify the worker VM entries in the output and note their names.
+4. Identify the worker nodes using this command.
+   
+    ```bash
+    oc get nodes -l node-role.kubernetes.io/worker
+    ```
+    
+    **Expected Output:**
+
+    ```text
+    NAME                               STATUS   ROLES    AGE    VERSION
+    r9s4t2c6g8n4y0y-np-1-k7q89-ndjqr   Ready    worker   123m   v1.35.5
+    r9s4t2c6g8n4y0y-np-1-k7q89-xx7dd   Ready    worker   123m   v1.35.5
+    ```
+
 5. Confirm the absence of master VMs by filtering for VM resources and verifying that none have a master or control-plane naming pattern.
 6. Confirm the absence of etcd disks by filtering for disk resources and verifying that no etcd-labelled disks are present.
 7. Confirm the absence of control plane load balancers by filtering for load balancer resources and verifying none are associated with the API server endpoint.
