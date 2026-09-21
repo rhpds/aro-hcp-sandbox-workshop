@@ -126,11 +126,14 @@
 
 # Step 6: Create the cluster
 - name: Build cluster identity maps
+  vars:
+    _id_map: >-
+      {{ '{' }}{{ _mi_ids.service }}:{{ '{}' }},{{ _mi_ids.cp_cluster_api_azure }}:{{ '{}' }},{{ _mi_ids.cp_control_plane }}:{{ '{}' }},{{ _mi_ids.cp_cloud_controller_manager }}:{{ '{}' }},{{ _mi_ids.cp_ingress }}:{{ '{}' }},{{ _mi_ids.cp_disk_csi_driver }}:{{ '{}' }},{{ _mi_ids.cp_file_csi_driver }}:{{ '{}' }},{{ _mi_ids.cp_image_registry }}:{{ '{}' }},{{ _mi_ids.cp_cloud_network_config }}:{{ '{}' }},{{ _mi_ids.cp_kms }}:{{ '{}' }}{{ '}' }}
+    _op_auth: >-
+      {{ '{' }}user-assigned-identities:{{ '{' }}control-plane-operators:{{ '{' }}cluster-api-azure:{{ _mi_ids.cp_cluster_api_azure }},control-plane:{{ _mi_ids.cp_control_plane }},cloud-controller-manager:{{ _mi_ids.cp_cloud_controller_manager }},ingress:{{ _mi_ids.cp_ingress }},disk-csi-driver:{{ _mi_ids.cp_disk_csi_driver }},file-csi-driver:{{ _mi_ids.cp_file_csi_driver }},image-registry:{{ _mi_ids.cp_image_registry }},cloud-network-config:{{ _mi_ids.cp_cloud_network_config }},kms:{{ _mi_ids.cp_kms }}{{ '}' }},data-plane-operators:{{ '{' }}disk-csi-driver:{{ _mi_ids.dp_disk_csi_driver }},file-csi-driver:{{ _mi_ids.dp_file_csi_driver }},image-registry:{{ _mi_ids.dp_image_registry }}{{ '}' }},service-managed-identity:{{ _mi_ids.service }}{{ '}' }}{{ '}' }}
   ansible.builtin.set_fact:
-    _aro_user_assigned_ids: >-
-      {{{ _mi_ids.service }}:{},{{ _mi_ids.cp_cluster_api_azure }}:{},{{ _mi_ids.cp_control_plane }}:{},{{ _mi_ids.cp_cloud_controller_manager }}:{},{{ _mi_ids.cp_ingress }}:{},{{ _mi_ids.cp_disk_csi_driver }}:{},{{ _mi_ids.cp_file_csi_driver }}:{},{{ _mi_ids.cp_image_registry }}:{},{{ _mi_ids.cp_cloud_network_config }}:{},{{ _mi_ids.cp_kms }}:{}}
-    _aro_operator_auth: >-
-      {user-assigned-identities:{control-plane-operators:{cluster-api-azure:{{ _mi_ids.cp_cluster_api_azure }},control-plane:{{ _mi_ids.cp_control_plane }},cloud-controller-manager:{{ _mi_ids.cp_cloud_controller_manager }},ingress:{{ _mi_ids.cp_ingress }},disk-csi-driver:{{ _mi_ids.cp_disk_csi_driver }},file-csi-driver:{{ _mi_ids.cp_file_csi_driver }},image-registry:{{ _mi_ids.cp_image_registry }},cloud-network-config:{{ _mi_ids.cp_cloud_network_config }},kms:{{ _mi_ids.cp_kms }}},data-plane-operators:{disk-csi-driver:{{ _mi_ids.dp_disk_csi_driver }},file-csi-driver:{{ _mi_ids.dp_file_csi_driver }},image-registry:{{ _mi_ids.dp_image_registry }}},service-managed-identity:{{ _mi_ids.service }}}}
+    _aro_user_assigned_ids: "{{ _id_map }}"
+    _aro_operator_auth: "{{ _op_auth }}"
 
 - name: Create ARO HCP cluster
   ansible.builtin.command: >-
