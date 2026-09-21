@@ -32,7 +32,7 @@ spec:
     - id: module-00
       title: "Introduction, Pre-flight & Cluster Resource Group"
       duration_min: 20
-      status: not_started
+      status: in_progress
     - id: module-01
       title: "Where Is the Control Plane? HyperShift CRDs + NodePool Scaling"
       duration_min: 20
