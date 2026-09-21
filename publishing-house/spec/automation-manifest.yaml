@@ -10,7 +10,7 @@
 #   meta/main.yml → role metadata
 #
 # The role should be written to run FROM the bastion host deployed
-# by the AgnosticV catalog item (rh1-2027/lb1083-aro-hcp-sandbox-azure).
+# by the AgnosticV catalog item (rh1-2027/lb1803-aro-hcp-sandbox-azure).
 # The bastion has az CLI, Java 17, Maven, PostgreSQL client, httpd-tools.
 # Azure credentials are injected via azure_sandbox passthrough.
 
