@@ -21,6 +21,36 @@
   delay: 10
   until: r_console_check.status == 200
 
+- name: Get cluster API URL
+  ansible.builtin.command: >-
+    oc whoami --show-server
+  environment:
+    KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
+  register: r_api_url
+  changed_when: false
+
+- name: Send user info to portal
+  agnosticd.core.agnosticd_user_info:
+    msg: |
+      ARO HCP Sandbox Workshop - Environment Ready
+
+      OpenShift Console: {{ _console_url }}
+      OpenShift API: {{ r_api_url.stdout }}
+      Username: admin
+      Password: {{ aro_hcp_keycloak_admin_password }}
+
+      Keycloak Admin Console: {{ _keycloak_url }}
+      Keycloak Username: {{ aro_hcp_keycloak_admin_user }}
+      Keycloak Password: {{ aro_hcp_keycloak_admin_password }}
+    data:
+      openshift_console_url: "{{ _console_url }}"
+      openshift_api_url: "{{ r_api_url.stdout }}"
+      openshift_admin_user: admin
+      openshift_admin_password: "{{ aro_hcp_keycloak_admin_password }}"
+      keycloak_url: "{{ _keycloak_url }}"
+      keycloak_admin_user: "{{ aro_hcp_keycloak_admin_user }}"
+      keycloak_admin_password: "{{ aro_hcp_keycloak_admin_password }}"
+
 - name: Post workload tasks complete
   when: not silent | bool
   ansible.builtin.debug:
