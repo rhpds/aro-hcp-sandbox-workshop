@@ -9,7 +9,7 @@
 #
 # Prerequisites:
 #   - Azure CLI 2.67.0+
-#   - ARO HCP CLI extension (aro_hcp-1.0.0b2-py3-none-any.whl)
+#   - ARO HCP CLI extension (see Step 0)
 #   - jq 1.6+
 #   - Service principal with Contributor + User Access Administrator
 #   - Resource providers registered: Microsoft.RedHatOpenShift, Microsoft.Compute,
@@ -40,9 +40,15 @@ set -euo pipefail
 ###############################################################################
 # Step 0: Install ARO HCP CLI extension
 ###############################################################################
-# The wheel file must be pre-downloaded and placed on the bastion.
-# az extension add --source aro_hcp-1.0.0b2-py3-none-any.whl
+# Official wheel: https://aka.ms/aro-hcp-cli (currently aro_hcp-1.0.0b3)
+# The downloaded file must be renamed to match wheel naming convention:
+#   curl -sLo aro_hcp-1.0.0b3-py3-none-any.whl https://aka.ms/aro-hcp-cli
+#   az extension add --source aro_hcp-1.0.0b3-py3-none-any.whl --yes
 # Verify: az aro hcp -h
+#
+# NOTE: The bennerv/ARO-HCP/releases/0.0.2 wheel (b2) is STALE — it targets
+# API version 2026-06-30-preview which is no longer accepted. Always use
+# the aka.ms redirect for the current version.
 
 ###############################################################################
 # Step 1: Create the resource group
@@ -132,6 +138,9 @@ az role assignment create \
   --assignee-principal-type ServicePrincipal \
   --role "14b46e9e-c2b7-41b4-b07b-48a6ebf60603" \
   --scope "${KV_ID}"
+
+# RBAC propagation delay — wait before creating the key
+sleep 30
 
 az keyvault key create \
   --vault-name "${KV_NAME}" \
