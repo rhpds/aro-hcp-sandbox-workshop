@@ -24,5 +24,5 @@ Defined in `defaults/main.yml`:
 ```yaml
 - hosts: all
   roles:
-    - <your_namespace>.<your_collection_name>.example
+    - aro_hcp_sandbox_workshop.automation.example
 ```
