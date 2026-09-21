@@ -95,7 +95,7 @@ development:
     gitops:
       status: not_started
     ansible:
-      status: not_started
+      status: in_progress
   e2e:
     status: not_started
   healthCheck:
