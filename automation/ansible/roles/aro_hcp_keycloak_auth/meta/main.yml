@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  role_name: aro_hcp_keycloak_auth
+  author: Red Hat GPTE
+  description: |
+    Configure Keycloak as external IDP for ARO HCP cluster.
+    Deploys Keycloak on the cluster, creates realm/client/user,
+    registers as external auth, and creates console secrets.
+  license: Apache-2.0
+  min_ansible_version: "2.14"
+  platforms: []
+  galaxy_tags:
+    - azure
+    - aro
+    - hcp
+    - keycloak
+    - openshift
+dependencies: []

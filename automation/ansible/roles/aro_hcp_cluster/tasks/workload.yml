@@ -1,0 +1,195 @@
+---
+# Step 1: Resource Group
+- name: Create resource group
+  ansible.builtin.command: >-
+    az group create
+    --name "{{ aro_hcp_cluster_rg }}"
+    --subscription "{{ aro_hcp_cluster_azure_subscription }}"
+    --location "{{ aro_hcp_cluster_location }}"
+  register: r_rg_create
+  changed_when: true
+
+# Step 2: Network infrastructure
+- name: Create NSG
+  ansible.builtin.command: >-
+    az network nsg create
+    --name "{{ aro_hcp_cluster_nsg }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --location "{{ aro_hcp_cluster_location }}"
+  register: r_nsg_create
+  changed_when: true
+
+- name: Create VNet
+  ansible.builtin.command: >-
+    az network vnet create
+    --name "{{ aro_hcp_cluster_vnet }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --location "{{ aro_hcp_cluster_location }}"
+    --address-prefixes "{{ aro_hcp_cluster_vnet_prefix }}"
+  register: r_vnet_create
+  changed_when: true
+
+- name: Create worker subnet
+  ansible.builtin.command: >-
+    az network vnet subnet create
+    --name "{{ aro_hcp_cluster_worker_subnet }}"
+    --vnet-name "{{ aro_hcp_cluster_vnet }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --address-prefixes "{{ aro_hcp_cluster_worker_subnet_prefix }}"
+    --network-security-group "{{ aro_hcp_cluster_nsg }}"
+    --private-endpoint-network-policies Disabled
+  register: r_worker_subnet
+  changed_when: true
+
+- name: Create VNet integration subnet
+  ansible.builtin.command: >-
+    az network vnet subnet create
+    --name "{{ aro_hcp_cluster_integration_subnet }}"
+    --vnet-name "{{ aro_hcp_cluster_vnet }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --address-prefixes "{{ aro_hcp_cluster_integration_subnet_prefix }}"
+    --delegations Microsoft.RedHatOpenShift/hcpOpenShiftClusters
+  register: r_integration_subnet
+  changed_when: true
+
+- name: Capture network resource IDs
+  ansible.builtin.include_tasks: capture_network_ids.yml
+
+# Step 3: Key Vault
+- name: Create Key Vault
+  ansible.builtin.command: >-
+    az keyvault create
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --name "{{ aro_hcp_cluster_kv }}"
+    --enable-rbac-authorization true
+    --public-network-access Enabled
+    --location "{{ aro_hcp_cluster_location }}"
+  register: r_kv_create
+  changed_when: true
+
+- name: Get Key Vault ID
+  ansible.builtin.command: >-
+    az keyvault show
+    --name "{{ aro_hcp_cluster_kv }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query id -o tsv
+  register: r_kv_id
+  changed_when: false
+
+- name: Get service principal object ID
+  ansible.builtin.command: >-
+    az ad sp show --id "{{ aro_hcp_cluster_azure_sp_id }}" --query id -o tsv
+  register: r_sp_object_id
+  changed_when: false
+
+- name: Assign Key Vault Crypto User to service principal
+  ansible.builtin.command: >-
+    az role assignment create
+    --assignee-object-id "{{ r_sp_object_id.stdout }}"
+    --assignee-principal-type ServicePrincipal
+    --role "14b46e9e-c2b7-41b4-b07b-48a6ebf60603"
+    --scope "{{ r_kv_id.stdout }}"
+  changed_when: true
+
+- name: Wait for RBAC propagation
+  ansible.builtin.pause:
+    seconds: "{{ aro_hcp_cluster_rbac_delay }}"
+
+- name: Create etcd encryption key
+  ansible.builtin.command: >-
+    az keyvault key create
+    --vault-name "{{ aro_hcp_cluster_kv }}"
+    --name etcd-data-kms-encryption-key
+    --kty RSA --size 2048
+  register: r_etcd_key
+  changed_when: true
+
+- name: Get etcd key version
+  ansible.builtin.shell: |
+    set -euo pipefail
+    az keyvault key show \
+      --vault-name "{{ aro_hcp_cluster_kv }}" \
+      --name etcd-data-kms-encryption-key \
+      --query "key.kid" -o tsv | rev | cut -d'/' -f1 | rev
+  args:
+    executable: /bin/bash
+  register: r_etcd_key_version
+  changed_when: false
+
+# Step 4: Managed identities
+- name: Create managed identities
+  ansible.builtin.include_tasks: create_managed_identities.yml
+
+# Step 5: Role assignments
+- name: Create role assignments
+  ansible.builtin.include_tasks: create_role_assignments.yml
+
+# Step 6: Create the cluster
+- name: Build cluster identity maps
+  ansible.builtin.set_fact:
+    _aro_user_assigned_ids: >-
+      {{{ _mi_ids.service }}:{},{{ _mi_ids.cp_cluster_api_azure }}:{},{{ _mi_ids.cp_control_plane }}:{},{{ _mi_ids.cp_cloud_controller_manager }}:{},{{ _mi_ids.cp_ingress }}:{},{{ _mi_ids.cp_disk_csi_driver }}:{},{{ _mi_ids.cp_file_csi_driver }}:{},{{ _mi_ids.cp_image_registry }}:{},{{ _mi_ids.cp_cloud_network_config }}:{},{{ _mi_ids.cp_kms }}:{}}
+    _aro_operator_auth: >-
+      {user-assigned-identities:{control-plane-operators:{cluster-api-azure:{{ _mi_ids.cp_cluster_api_azure }},control-plane:{{ _mi_ids.cp_control_plane }},cloud-controller-manager:{{ _mi_ids.cp_cloud_controller_manager }},ingress:{{ _mi_ids.cp_ingress }},disk-csi-driver:{{ _mi_ids.cp_disk_csi_driver }},file-csi-driver:{{ _mi_ids.cp_file_csi_driver }},image-registry:{{ _mi_ids.cp_image_registry }},cloud-network-config:{{ _mi_ids.cp_cloud_network_config }},kms:{{ _mi_ids.cp_kms }}},data-plane-operators:{disk-csi-driver:{{ _mi_ids.dp_disk_csi_driver }},file-csi-driver:{{ _mi_ids.dp_file_csi_driver }},image-registry:{{ _mi_ids.dp_image_registry }}},service-managed-identity:{{ _mi_ids.service }}}}
+
+- name: Create ARO HCP cluster
+  ansible.builtin.command: >-
+    az aro hcp cluster create
+    --name "{{ aro_hcp_cluster_name }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --location "{{ aro_hcp_cluster_location }}"
+    --version "{{ aro_hcp_cluster_version }}"
+    --channel-group "{{ aro_hcp_cluster_channel_group }}"
+    --subnet-id "{{ _net_ids.subnet }}"
+    --vnet-integration-subnet-id "{{ _net_ids.integration_subnet }}"
+    --nsg "{{ _net_ids.nsg }}"
+    --managed-resource-group-name "{{ aro_hcp_cluster_managed_rg }}"
+    --key-management-mode CustomerManaged
+    --etcd-encryption-type KMS
+    --kms-vault-name "{{ aro_hcp_cluster_kv }}"
+    --vault-visibility "{{ aro_hcp_cluster_kv_visibility }}"
+    --kms-active-key "{name:etcd-data-kms-encryption-key,version:{{ r_etcd_key_version.stdout }}}"
+    --user-assigned-identities "{{ _aro_user_assigned_ids }}"
+    --operators-authentication "{{ _aro_operator_auth }}"
+  async: "{{ aro_hcp_cluster_create_timeout }}"
+  poll: 30
+  register: r_cluster_create
+  changed_when: true
+
+# Step 7: Verify cluster
+- name: Verify cluster provisioning state
+  ansible.builtin.command: >-
+    az aro hcp cluster show
+    --name "{{ aro_hcp_cluster_name }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query "properties.provisioningState" -o tsv
+  register: r_cluster_state
+  changed_when: false
+  failed_when: r_cluster_state.stdout != "Succeeded"
+
+# Step 8: Node pool
+- name: Create node pool
+  ansible.builtin.command: >-
+    az aro hcp cluster nodepool create
+    --cluster-name "{{ aro_hcp_cluster_name }}"
+    --name "{{ aro_hcp_cluster_np }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --replicas "{{ aro_hcp_cluster_np_replicas }}"
+    --vm-size "{{ aro_hcp_cluster_np_vm_size }}"
+    --version "{{ aro_hcp_cluster_np_version }}"
+    --channel-group "{{ aro_hcp_cluster_channel_group }}"
+  async: "{{ aro_hcp_cluster_create_timeout }}"
+  poll: 30
+  register: r_np_create
+  changed_when: true
+
+- name: Verify node pool provisioning state
+  ansible.builtin.command: >-
+    az aro hcp cluster nodepool show
+    --cluster-name "{{ aro_hcp_cluster_name }}"
+    --name "{{ aro_hcp_cluster_np }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query "properties.provisioningState" -o tsv
+  register: r_np_state
+  changed_when: false
+  failed_when: r_np_state.stdout != "Succeeded"

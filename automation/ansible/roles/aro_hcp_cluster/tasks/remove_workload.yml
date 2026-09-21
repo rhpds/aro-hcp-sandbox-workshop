@@ -1,0 +1,59 @@
+---
+# Teardown order is CRITICAL: external-auth → nodepool → cluster → RG
+# Known bug causes stuck resource group if cluster is not deleted first.
+
+- name: Log into Azure
+  ansible.builtin.command: >-
+    az login --service-principal
+    -u "{{ aro_hcp_cluster_azure_sp_id }}"
+    -p "{{ aro_hcp_cluster_azure_sp_password }}"
+    --tenant "{{ aro_hcp_cluster_azure_tenant }}"
+    --output none
+  changed_when: true
+  no_log: true
+
+- name: Delete external auth (if exists)
+  ansible.builtin.command: >-
+    az aro hcp cluster external-auth delete
+    --cluster-name "{{ aro_hcp_cluster_name }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --name keycloak --yes
+  register: r_delete_auth
+  changed_when: true
+  failed_when: false
+
+- name: Delete node pool
+  ansible.builtin.command: >-
+    az aro hcp cluster nodepool delete
+    --cluster-name "{{ aro_hcp_cluster_name }}"
+    --name "{{ aro_hcp_cluster_np }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --yes
+  register: r_delete_np
+  changed_when: true
+  failed_when: false
+
+- name: Delete cluster
+  ansible.builtin.command: >-
+    az aro hcp cluster delete
+    --name "{{ aro_hcp_cluster_name }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --yes
+  async: 3600
+  poll: 30
+  register: r_delete_cluster
+  changed_when: true
+  failed_when: false
+
+- name: Delete resource group
+  ansible.builtin.command: >-
+    az group delete
+    --name "{{ aro_hcp_cluster_rg }}"
+    --yes --no-wait
+  changed_when: true
+  failed_when: false
+
+- name: Cluster removal complete
+  when: not silent | bool
+  ansible.builtin.debug:
+    msg: "ARO HCP cluster {{ aro_hcp_cluster_name }} teardown initiated."

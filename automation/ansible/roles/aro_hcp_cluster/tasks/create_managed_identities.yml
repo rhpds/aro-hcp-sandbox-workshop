@@ -1,0 +1,41 @@
+---
+# 9 control plane + 3 data plane + 1 service = 13 managed identities
+
+- name: Create control plane managed identities
+  ansible.builtin.command: >-
+    az identity create
+    --name "{{ aro_hcp_cluster_name }}-cp-{{ item }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+  loop:
+    - cluster-api-azure
+    - control-plane
+    - cloud-controller-manager
+    - ingress
+    - disk-csi-driver
+    - file-csi-driver
+    - image-registry
+    - cloud-network-config
+    - kms
+  changed_when: true
+
+- name: Create data plane managed identities
+  ansible.builtin.command: >-
+    az identity create
+    --name "{{ aro_hcp_cluster_name }}-dp-{{ item }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+  loop:
+    - disk-csi-driver
+    - file-csi-driver
+    - image-registry
+  changed_when: true
+
+- name: Create service managed identity
+  ansible.builtin.command: >-
+    az identity create
+    --name "{{ aro_hcp_cluster_name }}-service-managed-identity"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+  changed_when: true
+
+# Capture all resource IDs and principal IDs into a single dict
+- name: Capture managed identity IDs
+  ansible.builtin.include_tasks: capture_mi_ids.yml

@@ -1,0 +1,292 @@
+---
+# Step 11: Deploy Keycloak
+- name: Generate console client secret
+  ansible.builtin.command: openssl rand -hex 16
+  register: r_client_secret
+  changed_when: false
+
+- name: Set client secret fact
+  ansible.builtin.set_fact:
+    _console_client_secret: "{{ r_client_secret.stdout }}"
+
+- name: Create Keycloak namespace
+  kubernetes.core.k8s:
+    kubeconfig: "{{ aro_hcp_keycloak_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ aro_hcp_keycloak_namespace }}"
+
+- name: Deploy Keycloak
+  kubernetes.core.k8s:
+    kubeconfig: "{{ aro_hcp_keycloak_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: keycloak
+        namespace: "{{ aro_hcp_keycloak_namespace }}"
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: keycloak
+        template:
+          metadata:
+            labels:
+              app: keycloak
+          spec:
+            containers:
+              - name: keycloak
+                image: "{{ aro_hcp_keycloak_image }}"
+                args:
+                  - start-dev
+                env:
+                  - name: KEYCLOAK_ADMIN
+                    value: "{{ aro_hcp_keycloak_admin_user }}"
+                  - name: KEYCLOAK_ADMIN_PASSWORD
+                    value: "{{ aro_hcp_keycloak_admin_password }}"
+                  - name: KC_PROXY
+                    value: edge
+                  - name: KC_HOSTNAME_STRICT
+                    value: "false"
+                  - name: KC_HTTP_ENABLED
+                    value: "true"
+                ports:
+                  - containerPort: 8080
+                    name: http
+                readinessProbe:
+                  httpGet:
+                    path: /realms/master
+                    port: 8080
+                  initialDelaySeconds: 30
+                  periodSeconds: 10
+                resources:
+                  requests:
+                    cpu: "{{ aro_hcp_keycloak_cpu_request }}"
+                    memory: "{{ aro_hcp_keycloak_mem_request }}"
+                  limits:
+                    cpu: "{{ aro_hcp_keycloak_cpu_limit }}"
+                    memory: "{{ aro_hcp_keycloak_mem_limit }}"
+
+- name: Create Keycloak service
+  kubernetes.core.k8s:
+    kubeconfig: "{{ aro_hcp_keycloak_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: keycloak
+        namespace: "{{ aro_hcp_keycloak_namespace }}"
+      spec:
+        selector:
+          app: keycloak
+        ports:
+          - port: 8080
+            targetPort: 8080
+            name: http
+
+- name: Create Keycloak route
+  ansible.builtin.command: >-
+    oc create route edge keycloak
+    --service=keycloak --port=http
+    -n "{{ aro_hcp_keycloak_namespace }}"
+  environment:
+    KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
+  register: r_route_create
+  changed_when: true
+  failed_when:
+    - r_route_create.rc != 0
+    - "'already exists' not in r_route_create.stderr"
+
+- name: Wait for Keycloak rollout
+  ansible.builtin.command: >-
+    oc rollout status deployment/keycloak
+    -n "{{ aro_hcp_keycloak_namespace }}"
+    --timeout={{ aro_hcp_keycloak_deploy_timeout }}s
+  environment:
+    KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
+  changed_when: false
+
+- name: Get Keycloak route URL
+  ansible.builtin.command: >-
+    oc get route keycloak
+    -n {{ aro_hcp_keycloak_namespace }}
+    -o jsonpath='{.spec.host}'
+  environment:
+    KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
+  register: r_keycloak_host
+  changed_when: false
+
+- name: Set Keycloak URL fact
+  ansible.builtin.set_fact:
+    _keycloak_url: "https://{{ r_keycloak_host.stdout }}"
+
+- name: Wait for Keycloak API readiness
+  ansible.builtin.uri:
+    url: "{{ _keycloak_url }}/realms/master"
+    validate_certs: false
+    status_code: 200
+  register: r_kc_ready
+  until: r_kc_ready.status == 200
+  retries: "{{ aro_hcp_keycloak_api_retries }}"
+  delay: "{{ aro_hcp_keycloak_api_retry_delay }}"
+
+# Configure Keycloak realm, client, and user
+- name: Get Keycloak admin token
+  ansible.builtin.uri:
+    url: "{{ _keycloak_url }}/realms/master/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      client_id: admin-cli
+      username: "{{ aro_hcp_keycloak_admin_user }}"
+      password: "{{ aro_hcp_keycloak_admin_password }}"
+      grant_type: password
+    validate_certs: false
+  register: r_admin_token
+  no_log: true
+
+- name: Set admin token fact
+  ansible.builtin.set_fact:
+    _kc_token: "{{ r_admin_token.json.access_token }}"
+  no_log: true
+
+- name: Create OpenShift realm
+  ansible.builtin.uri:
+    url: "{{ _keycloak_url }}/admin/realms"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ _kc_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      realm: "{{ aro_hcp_keycloak_realm }}"
+      enabled: true
+    validate_certs: false
+    status_code:
+      - 201
+      - 409
+  register: r_realm_create
+
+- name: Get console URL
+  ansible.builtin.command: >-
+    oc get ingresses.config.openshift.io cluster
+    -o jsonpath='{.spec.domain}'
+  environment:
+    KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
+  register: r_ingress_domain
+  changed_when: false
+
+- name: Set console URL fact
+  ansible.builtin.set_fact:
+    _console_url: "https://console-openshift-console.{{ r_ingress_domain.stdout }}"
+
+- name: Create OpenShift console OIDC client
+  ansible.builtin.uri:
+    url: "{{ _keycloak_url }}/admin/realms/{{ aro_hcp_keycloak_realm }}/clients"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ _kc_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      clientId: "{{ aro_hcp_keycloak_console_client_id }}"
+      enabled: true
+      protocol: openid-connect
+      publicClient: false
+      clientAuthenticatorType: client-secret
+      secret: "{{ _console_client_secret }}"
+      redirectUris:
+        - "{{ _console_url }}/auth/callback"
+      webOrigins:
+        - "*"
+      standardFlowEnabled: true
+      directAccessGrantsEnabled: true
+    validate_certs: false
+    status_code:
+      - 201
+      - 409
+
+- name: Create admin user in Keycloak realm
+  ansible.builtin.uri:
+    url: "{{ _keycloak_url }}/admin/realms/{{ aro_hcp_keycloak_realm }}/users"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ _kc_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      username: admin
+      enabled: true
+      email: admin@example.com
+      firstName: Cluster
+      lastName: Admin
+      emailVerified: true
+      requiredActions: []
+      credentials:
+        - type: password
+          value: "{{ aro_hcp_keycloak_admin_password }}"
+          temporary: false
+    validate_certs: false
+    status_code:
+      - 201
+      - 409
+
+# Step 12: Register external auth
+- name: Register Keycloak as ARO HCP external auth
+  ansible.builtin.command: >-
+    az aro hcp cluster external-auth create
+    --resource-group "{{ aro_hcp_keycloak_cluster_rg }}"
+    --cluster-name "{{ aro_hcp_keycloak_cluster_name }}"
+    --name keycloak
+    --issuer-url "{{ _keycloak_url }}/realms/{{ aro_hcp_keycloak_realm }}"
+    --issuer-audience "{{ aro_hcp_keycloak_console_client_id }}"
+    --username-claim preferred_username
+    --username-prefix-policy NoPrefix
+    --clients "[{client-id:{{ aro_hcp_keycloak_console_client_id }},component:{name:console,auth-client-namespace:openshift-console},type:Confidential}]"
+  register: r_external_auth
+  changed_when: true
+
+# Step 13: Console secrets and RBAC
+- name: Create console-oauth-config secret
+  kubernetes.core.k8s:
+    kubeconfig: "{{ aro_hcp_keycloak_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: console-oauth-config
+        namespace: openshift-console
+      type: Opaque
+      stringData:
+        clientSecret: "{{ _console_client_secret }}"
+
+- name: Create keycloak-console-openshift-console secret
+  kubernetes.core.k8s:
+    kubeconfig: "{{ aro_hcp_keycloak_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: keycloak-console-openshift-console
+        namespace: openshift-console
+      type: Opaque
+      stringData:
+        clientSecret: "{{ _console_client_secret }}"
+
+- name: Grant cluster-admin to Keycloak admin user
+  ansible.builtin.command: oc adm policy add-cluster-role-to-user cluster-admin admin
+  environment:
+    KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
+  register: r_cluster_admin
+  changed_when: true
+  failed_when:
+    - r_cluster_admin.rc != 0
+    - "'already has' not in r_cluster_admin.stderr"

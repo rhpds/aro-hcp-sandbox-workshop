@@ -1,0 +1,49 @@
+---
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - aro_hcp_cluster_azure_subscription is defined
+      - aro_hcp_cluster_azure_subscription | length > 0
+      - aro_hcp_cluster_azure_sp_id is defined
+      - aro_hcp_cluster_azure_sp_id | length > 0
+      - aro_hcp_cluster_azure_sp_password is defined
+      - aro_hcp_cluster_azure_tenant is defined
+      - aro_hcp_cluster_name is defined
+      - aro_hcp_cluster_name | length > 0
+    fail_msg: >-
+      Azure credentials and cluster name must be provided.
+      Ensure azure_subscription, azure_service_principal_id,
+      azure_service_principal_password, azure_tenant, and guid are set.
+
+- name: Log into Azure
+  ansible.builtin.command: >-
+    az login --service-principal
+    -u "{{ aro_hcp_cluster_azure_sp_id }}"
+    -p "{{ aro_hcp_cluster_azure_sp_password }}"
+    --tenant "{{ aro_hcp_cluster_azure_tenant }}"
+    --output none
+  changed_when: true
+  no_log: true
+
+- name: Set default subscription
+  ansible.builtin.command: >-
+    az account set --subscription "{{ aro_hcp_cluster_azure_subscription }}"
+  changed_when: true
+
+- name: Install ARO HCP CLI extension
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -sLo /tmp/aro_hcp-1.0.0b3-py3-none-any.whl "{{ aro_hcp_cluster_cli_extension_url }}"
+    az extension add --source /tmp/aro_hcp-1.0.0b3-py3-none-any.whl --yes 2>/dev/null || true
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Verify ARO HCP CLI extension
+  ansible.builtin.command: az aro hcp -h
+  changed_when: false
+
+- name: Pre workload tasks complete
+  when: not silent | bool
+  ansible.builtin.debug:
+    msg: "Pre workload checks passed for {{ aro_hcp_cluster_name }}"

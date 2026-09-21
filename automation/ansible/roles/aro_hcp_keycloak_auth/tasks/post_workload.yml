@@ -1,0 +1,31 @@
+---
+- name: Wait for console deployment
+  ansible.builtin.command: >-
+    oc rollout status deployment/console -n openshift-console --timeout=120s
+  environment:
+    KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
+  register: r_console_rollout
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: r_console_rollout.rc == 0
+
+- name: Verify console is responding
+  ansible.builtin.uri:
+    url: "{{ _console_url }}"
+    validate_certs: false
+    status_code: 200
+    follow_redirects: all
+  register: r_console_check
+  retries: 6
+  delay: 10
+  until: r_console_check.status == 200
+
+- name: Post workload tasks complete
+  when: not silent | bool
+  ansible.builtin.debug:
+    msg: >-
+      Keycloak IDP configured for {{ aro_hcp_keycloak_cluster_name }}.
+      Console: {{ _console_url }}.
+      Keycloak: {{ _keycloak_url }}.
+      Login: admin / {{ aro_hcp_keycloak_admin_password }}.

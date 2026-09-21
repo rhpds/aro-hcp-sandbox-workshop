@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  role_name: aro_hcp_cluster
+  author: Red Hat GPTE
+  description: |
+    Provision ARO HCP cluster with full Azure infrastructure.
+    Creates resource group, VNet, NSG, Key Vault, managed identities,
+    role assignments, cluster, and node pool.
+  license: Apache-2.0
+  min_ansible_version: "2.14"
+  platforms: []
+  galaxy_tags:
+    - azure
+    - aro
+    - hcp
+    - openshift
+dependencies: []

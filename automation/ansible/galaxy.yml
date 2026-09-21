@@ -1,10 +1,14 @@
 ---
-namespace: "aro_hcp_sandbox_workshop"
-name: "automation"
+namespace: aro_hcp_sandbox_workshop
+name: automation
 version: "1.0.0"
 readme: README.md
 authors:
-  - "gmidha1 gmidha@redhat.com"
-description: "Starter collection for this project's custom Ansible automation."
-license: []
+  - "psrivast@redhat.com"
+description: >-
+  Ansible collection for ARO HCP Sandbox Workshop provisioning.
+  Provisions Azure infrastructure, ARO HCP cluster, Keycloak IDP,
+  and console access.
 repository: "https://github.com/rhpds/aro-hcp-sandbox-workshop"
+license:
+  - Apache-2.0

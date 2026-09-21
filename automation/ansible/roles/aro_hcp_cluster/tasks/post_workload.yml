@@ -1,0 +1,22 @@
+---
+- name: Get cluster API URL
+  ansible.builtin.command: >-
+    az aro hcp cluster show
+    --name "{{ aro_hcp_cluster_name }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query "properties.apiServerEndpoint" -o tsv
+  register: r_api_url
+  changed_when: false
+
+- name: Set cluster output facts
+  ansible.builtin.set_fact:
+    aro_hcp_cluster_api_url: "{{ r_api_url.stdout }}"
+    aro_hcp_cluster_rg_name: "{{ aro_hcp_cluster_rg }}"
+
+- name: Post workload tasks complete
+  when: not silent | bool
+  ansible.builtin.debug:
+    msg: >-
+      ARO HCP cluster {{ aro_hcp_cluster_name }} provisioned.
+      API: {{ r_api_url.stdout }}.
+      Node pool: {{ aro_hcp_cluster_np }} ({{ aro_hcp_cluster_np_replicas }}x {{ aro_hcp_cluster_np_vm_size }}).

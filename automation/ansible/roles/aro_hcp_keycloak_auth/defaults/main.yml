@@ -1,0 +1,36 @@
+---
+become_override: false
+silent: false
+
+# Cluster identity — must match aro_hcp_cluster role
+aro_hcp_keycloak_cluster_name: "{{ guid }}"
+aro_hcp_keycloak_cluster_rg: "{{ aro_hcp_keycloak_cluster_name }}-aro-hcp-rg"
+
+# Keycloak deployment
+aro_hcp_keycloak_namespace: keycloak
+aro_hcp_keycloak_image: quay.io/keycloak/keycloak:24.0
+aro_hcp_keycloak_realm: openshift
+aro_hcp_keycloak_console_client_id: openshift-console
+
+# Admin user for Keycloak + OCP console
+aro_hcp_keycloak_admin_user: admin
+aro_hcp_keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default('REPLACE_ME', true) }}"
+
+# oc CLI version to install
+aro_hcp_keycloak_oc_version: "4.22"
+
+# Keycloak deployment resources
+aro_hcp_keycloak_cpu_request: 500m
+aro_hcp_keycloak_cpu_limit: "1"
+aro_hcp_keycloak_mem_request: 512Mi
+aro_hcp_keycloak_mem_limit: 1Gi
+
+# Keycloak readiness timeout (seconds)
+aro_hcp_keycloak_deploy_timeout: 180
+aro_hcp_keycloak_api_retries: 30
+aro_hcp_keycloak_api_retry_delay: 5
+
+# Azure credentials — passed from AgnosticV
+aro_hcp_keycloak_azure_sp_id: "{{ azure_service_principal_id }}"
+aro_hcp_keycloak_azure_sp_password: "{{ azure_service_principal_password }}"
+aro_hcp_keycloak_azure_tenant: "{{ azure_tenant }}"

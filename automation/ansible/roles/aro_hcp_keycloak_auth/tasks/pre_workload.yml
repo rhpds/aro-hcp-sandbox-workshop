@@ -1,0 +1,50 @@
+---
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - aro_hcp_keycloak_cluster_name is defined
+      - aro_hcp_keycloak_cluster_name | length > 0
+      - aro_hcp_keycloak_admin_password is defined
+      - aro_hcp_keycloak_admin_password != 'REPLACE_ME'
+    fail_msg: >-
+      Cluster name and admin password must be set.
+      Ensure guid and ADMIN_PASSWORD are provided.
+
+# Step 9: Install oc CLI
+- name: Install oc CLI
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -sLo /tmp/openshift-client-linux.tar.gz \
+      "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable-{{ aro_hcp_keycloak_oc_version }}/openshift-client-linux.tar.gz"
+    tar xzf /tmp/openshift-client-linux.tar.gz -C /usr/local/bin oc kubectl
+    chmod +x /usr/local/bin/oc /usr/local/bin/kubectl
+  args:
+    executable: /bin/bash
+    creates: /usr/local/bin/oc
+
+# Step 10: Break-glass kubeconfig
+- name: Request break-glass admin kubeconfig
+  ansible.builtin.command: >-
+    az aro hcp cluster request-credential
+    --admin
+    --name "{{ aro_hcp_keycloak_cluster_name }}"
+    --resource-group "{{ aro_hcp_keycloak_cluster_rg }}"
+    --file /tmp/kubeconfig
+  changed_when: true
+
+- name: Set KUBECONFIG
+  ansible.builtin.set_fact:
+    aro_hcp_keycloak_kubeconfig: /tmp/kubeconfig
+
+- name: Verify cluster access
+  ansible.builtin.command: oc whoami
+  environment:
+    KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
+  register: r_whoami
+  changed_when: false
+  failed_when: "'system:customer-break-glass' not in r_whoami.stdout"
+
+- name: Pre workload tasks complete
+  when: not silent | bool
+  ansible.builtin.debug:
+    msg: "Cluster access verified as {{ r_whoami.stdout }}"

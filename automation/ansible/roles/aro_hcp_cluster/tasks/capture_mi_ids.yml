@@ -1,0 +1,71 @@
+---
+# Capture resource IDs (for cluster create) and principal IDs (for role assignments)
+
+- name: Get control plane MI details
+  ansible.builtin.command: >-
+    az identity show
+    --name "{{ aro_hcp_cluster_name }}-cp-{{ item }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query "[id, principalId]" -o tsv
+  loop:
+    - cluster-api-azure
+    - control-plane
+    - cloud-controller-manager
+    - ingress
+    - disk-csi-driver
+    - file-csi-driver
+    - image-registry
+    - cloud-network-config
+    - kms
+  register: r_cp_mi_details
+  changed_when: false
+
+- name: Get data plane MI details
+  ansible.builtin.command: >-
+    az identity show
+    --name "{{ aro_hcp_cluster_name }}-dp-{{ item }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query "[id, principalId]" -o tsv
+  loop:
+    - disk-csi-driver
+    - file-csi-driver
+    - image-registry
+  register: r_dp_mi_details
+  changed_when: false
+
+- name: Get service MI details
+  ansible.builtin.command: >-
+    az identity show
+    --name "{{ aro_hcp_cluster_name }}-service-managed-identity"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query "[id, principalId]" -o tsv
+  register: r_service_mi
+  changed_when: false
+
+- name: Set managed identity facts
+  ansible.builtin.set_fact:
+    _mi_ids:
+      cp_cluster_api_azure: "{{ r_cp_mi_details.results[0].stdout_lines[0] }}"
+      cp_cluster_api_azure_pid: "{{ r_cp_mi_details.results[0].stdout_lines[1] }}"
+      cp_control_plane: "{{ r_cp_mi_details.results[1].stdout_lines[0] }}"
+      cp_control_plane_pid: "{{ r_cp_mi_details.results[1].stdout_lines[1] }}"
+      cp_cloud_controller_manager: "{{ r_cp_mi_details.results[2].stdout_lines[0] }}"
+      cp_cloud_controller_manager_pid: "{{ r_cp_mi_details.results[2].stdout_lines[1] }}"
+      cp_ingress: "{{ r_cp_mi_details.results[3].stdout_lines[0] }}"
+      cp_ingress_pid: "{{ r_cp_mi_details.results[3].stdout_lines[1] }}"
+      cp_disk_csi_driver: "{{ r_cp_mi_details.results[4].stdout_lines[0] }}"
+      cp_file_csi_driver: "{{ r_cp_mi_details.results[5].stdout_lines[0] }}"
+      cp_file_csi_driver_pid: "{{ r_cp_mi_details.results[5].stdout_lines[1] }}"
+      cp_image_registry: "{{ r_cp_mi_details.results[6].stdout_lines[0] }}"
+      cp_image_registry_pid: "{{ r_cp_mi_details.results[6].stdout_lines[1] }}"
+      cp_cloud_network_config: "{{ r_cp_mi_details.results[7].stdout_lines[0] }}"
+      cp_cloud_network_config_pid: "{{ r_cp_mi_details.results[7].stdout_lines[1] }}"
+      cp_kms: "{{ r_cp_mi_details.results[8].stdout_lines[0] }}"
+      cp_kms_pid: "{{ r_cp_mi_details.results[8].stdout_lines[1] }}"
+      dp_disk_csi_driver: "{{ r_dp_mi_details.results[0].stdout_lines[0] }}"
+      dp_file_csi_driver: "{{ r_dp_mi_details.results[1].stdout_lines[0] }}"
+      dp_file_csi_driver_pid: "{{ r_dp_mi_details.results[1].stdout_lines[1] }}"
+      dp_image_registry: "{{ r_dp_mi_details.results[2].stdout_lines[0] }}"
+      dp_image_registry_pid: "{{ r_dp_mi_details.results[2].stdout_lines[1] }}"
+      service: "{{ r_service_mi.stdout_lines[0] }}"
+      service_pid: "{{ r_service_mi.stdout_lines[1] }}"

@@ -1,0 +1,55 @@
+---
+# External auth deletion is handled by aro_hcp_cluster remove_workload
+# (it runs first in the teardown sequence).
+# This role only cleans up the Keycloak namespace.
+
+- name: Request break-glass kubeconfig for teardown
+  ansible.builtin.command: >-
+    az aro hcp cluster request-credential
+    --admin
+    --name "{{ aro_hcp_keycloak_cluster_name }}"
+    --resource-group "{{ aro_hcp_keycloak_cluster_rg }}"
+    --file /tmp/kubeconfig
+  changed_when: true
+  failed_when: false
+  register: r_kubeconfig
+
+- name: Remove Keycloak namespace
+  kubernetes.core.k8s:
+    kubeconfig: /tmp/kubeconfig
+    state: absent
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ aro_hcp_keycloak_namespace }}"
+  when: r_kubeconfig.rc == 0
+
+- name: Remove console secrets
+  kubernetes.core.k8s:
+    kubeconfig: /tmp/kubeconfig
+    state: absent
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ item }}"
+        namespace: openshift-console
+  loop:
+    - console-oauth-config
+    - keycloak-console-openshift-console
+  when: r_kubeconfig.rc == 0
+
+- name: Remove admin cluster-admin binding
+  ansible.builtin.command: >-
+    oc adm policy remove-cluster-role-from-user cluster-admin admin
+  environment:
+    KUBECONFIG: /tmp/kubeconfig
+  changed_when: true
+  failed_when: false
+  when: r_kubeconfig.rc == 0
+
+- name: Keycloak removal complete
+  when: not silent | bool
+  ansible.builtin.debug:
+    msg: "Keycloak IDP removed from {{ aro_hcp_keycloak_cluster_name }}."

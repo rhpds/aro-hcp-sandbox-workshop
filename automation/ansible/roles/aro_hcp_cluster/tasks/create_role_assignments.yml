@@ -1,0 +1,115 @@
+---
+# Role definition GUIDs
+# These are Azure built-in + ARO HCP custom role definitions.
+
+- name: Set role definition GUIDs
+  ansible.builtin.set_fact:
+    _roles:
+      reader: "acdd72a7-3385-48ef-bd42-f606fba81ae7"
+      hcp_cluster_api_provider: "88366f10-ed47-4cc0-9fab-c8a06148393e"
+      hcp_control_plane_operator: "fc0c873f-45e9-4d0d-a7d1-585aab30c6ed"
+      cloud_controller_manager: "a1f96423-95ce-4224-ab27-4e3dc72facd4"
+      ingress_operator: "0336e1d3-7a87-462b-b6db-342b63f7802c"
+      file_storage_operator: "0d7aedc0-15fd-4a67-a412-efad370c947e"
+      image_registry: "8b32b316-c2f5-4ddf-b05b-83dacd2d08b5"
+      network_operator: "be7a6435-15ae-4171-8f30-4a343eff9e8f"
+      federated_credential: "ef318e2a-8334-4a05-9e4a-295a196c6a6e"
+      hcp_service_mi: "c0ff367d-66d8-445e-917c-583feb0ef0d4"
+      key_vault_crypto_user: "12338af0-0e69-4776-bea7-57ae8d297424"
+
+# Control plane operator roles
+- name: Assign control plane operator roles
+  ansible.builtin.command: >-
+    az role assignment create
+    --assignee-object-id "{{ item.pid }}"
+    --assignee-principal-type ServicePrincipal
+    --role "{{ item.role }}"
+    --scope "{{ item.scope }}"
+  loop:
+    - { pid: "{{ _mi_ids.cp_cluster_api_azure_pid }}", role: "{{ _roles.hcp_cluster_api_provider }}", scope: "{{ _net_ids.vnet }}" }
+    - { pid: "{{ _mi_ids.cp_control_plane_pid }}", role: "{{ _roles.hcp_control_plane_operator }}", scope: "{{ _net_ids.vnet }}" }
+    - { pid: "{{ _mi_ids.cp_control_plane_pid }}", role: "{{ _roles.hcp_control_plane_operator }}", scope: "{{ _net_ids.nsg }}" }
+    - { pid: "{{ _mi_ids.cp_cloud_controller_manager_pid }}", role: "{{ _roles.cloud_controller_manager }}", scope: "{{ _net_ids.vnet }}" }
+    - { pid: "{{ _mi_ids.cp_cloud_controller_manager_pid }}", role: "{{ _roles.cloud_controller_manager }}", scope: "{{ _net_ids.nsg }}" }
+    - { pid: "{{ _mi_ids.cp_ingress_pid }}", role: "{{ _roles.ingress_operator }}", scope: "{{ _net_ids.vnet }}" }
+    - { pid: "{{ _mi_ids.cp_file_csi_driver_pid }}", role: "{{ _roles.file_storage_operator }}", scope: "{{ _net_ids.vnet }}" }
+    - { pid: "{{ _mi_ids.cp_file_csi_driver_pid }}", role: "{{ _roles.file_storage_operator }}", scope: "{{ _net_ids.nsg }}" }
+    - { pid: "{{ _mi_ids.cp_image_registry_pid }}", role: "{{ _roles.image_registry }}", scope: "{{ _net_ids.vnet }}" }
+    - { pid: "{{ _mi_ids.cp_cloud_network_config_pid }}", role: "{{ _roles.network_operator }}", scope: "{{ _net_ids.subnet }}" }
+    - { pid: "{{ _mi_ids.cp_cloud_network_config_pid }}", role: "{{ _roles.network_operator }}", scope: "{{ _net_ids.vnet }}" }
+    - { pid: "{{ _mi_ids.cp_kms_pid }}", role: "{{ _roles.key_vault_crypto_user }}", scope: "{{ r_kv_id.stdout }}" }
+  loop_control:
+    label: "{{ item.pid | regex_search('[^/]+$') }} → {{ item.role | truncate(8, True, '') }}"
+  changed_when: true
+
+# Service MI roles on network resources
+- name: Assign service MI network roles
+  ansible.builtin.command: >-
+    az role assignment create
+    --assignee-object-id "{{ _mi_ids.service_pid }}"
+    --assignee-principal-type ServicePrincipal
+    --role "{{ item.role }}"
+    --scope "{{ item.scope }}"
+  loop:
+    - { role: "{{ _roles.hcp_service_mi }}", scope: "{{ _net_ids.vnet }}" }
+    - { role: "{{ _roles.hcp_service_mi }}", scope: "{{ _net_ids.nsg }}" }
+  loop_control:
+    label: "service-mi → {{ item.scope | regex_search('[^/]+$') }}"
+  changed_when: true
+
+# Service MI → Reader on each control plane identity
+- name: Assign service MI reader on CP identities
+  ansible.builtin.command: >-
+    az role assignment create
+    --assignee-object-id "{{ _mi_ids.service_pid }}"
+    --assignee-principal-type ServicePrincipal
+    --role "{{ _roles.reader }}"
+    --scope "{{ item }}"
+  loop:
+    - "{{ _mi_ids.cp_cluster_api_azure }}"
+    - "{{ _mi_ids.cp_control_plane }}"
+    - "{{ _mi_ids.cp_cloud_controller_manager }}"
+    - "{{ _mi_ids.cp_ingress }}"
+    - "{{ _mi_ids.cp_disk_csi_driver }}"
+    - "{{ _mi_ids.cp_file_csi_driver }}"
+    - "{{ _mi_ids.cp_image_registry }}"
+    - "{{ _mi_ids.cp_cloud_network_config }}"
+    - "{{ _mi_ids.cp_kms }}"
+  loop_control:
+    label: "reader → {{ item | regex_search('[^/]+$') }}"
+  changed_when: true
+
+# Service MI → federated credential on data plane identities
+- name: Assign service MI federated credential on DP identities
+  ansible.builtin.command: >-
+    az role assignment create
+    --assignee-object-id "{{ _mi_ids.service_pid }}"
+    --assignee-principal-type ServicePrincipal
+    --role "{{ _roles.federated_credential }}"
+    --scope "{{ item }}"
+  loop:
+    - "{{ _mi_ids.dp_disk_csi_driver }}"
+    - "{{ _mi_ids.dp_file_csi_driver }}"
+    - "{{ _mi_ids.dp_image_registry }}"
+  loop_control:
+    label: "fedcred → {{ item | regex_search('[^/]+$') }}"
+  changed_when: true
+
+# Data plane operator roles
+- name: Assign data plane operator roles
+  ansible.builtin.command: >-
+    az role assignment create
+    --assignee-object-id "{{ item.pid }}"
+    --assignee-principal-type ServicePrincipal
+    --role "{{ item.role }}"
+    --scope "{{ item.scope }}"
+  loop:
+    - { pid: "{{ _mi_ids.dp_file_csi_driver_pid }}", role: "{{ _roles.file_storage_operator }}", scope: "{{ _net_ids.subnet }}" }
+    - { pid: "{{ _mi_ids.dp_file_csi_driver_pid }}", role: "{{ _roles.file_storage_operator }}", scope: "{{ _net_ids.nsg }}" }
+    # --- 3 assignments MISSING from hackathon doc, discovered during live testing ---
+    - { pid: "{{ _mi_ids.dp_file_csi_driver_pid }}", role: "{{ _roles.file_storage_operator }}", scope: "{{ _net_ids.vnet }}" }
+    - { pid: "{{ _mi_ids.dp_image_registry_pid }}", role: "{{ _roles.image_registry }}", scope: "{{ _net_ids.vnet }}" }
+    - { pid: "{{ _mi_ids.dp_image_registry_pid }}", role: "{{ _roles.image_registry }}", scope: "{{ _net_ids.subnet }}" }
+  loop_control:
+    label: "dp {{ item.pid | regex_search('[^/]+$') }} → {{ item.scope | regex_search('[^/]+$') }}"
+  changed_when: true

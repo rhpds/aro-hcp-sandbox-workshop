@@ -1,0 +1,46 @@
+---
+- name: Get NSG ID
+  ansible.builtin.command: >-
+    az network nsg show
+    --name "{{ aro_hcp_cluster_nsg }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query id -o tsv
+  register: r_nsg_id
+  changed_when: false
+
+- name: Get subnet ID
+  ansible.builtin.command: >-
+    az network vnet subnet show
+    --name "{{ aro_hcp_cluster_worker_subnet }}"
+    --vnet-name "{{ aro_hcp_cluster_vnet }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query id -o tsv
+  register: r_subnet_id
+  changed_when: false
+
+- name: Get VNet ID
+  ansible.builtin.command: >-
+    az network vnet show
+    --name "{{ aro_hcp_cluster_vnet }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query id -o tsv
+  register: r_vnet_id
+  changed_when: false
+
+- name: Get integration subnet ID
+  ansible.builtin.command: >-
+    az network vnet subnet show
+    --name "{{ aro_hcp_cluster_integration_subnet }}"
+    --vnet-name "{{ aro_hcp_cluster_vnet }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query id -o tsv
+  register: r_integration_subnet_id
+  changed_when: false
+
+- name: Set network ID facts
+  ansible.builtin.set_fact:
+    _net_ids:
+      nsg: "{{ r_nsg_id.stdout }}"
+      subnet: "{{ r_subnet_id.stdout }}"
+      vnet: "{{ r_vnet_id.stdout }}"
+      integration_subnet: "{{ r_integration_subnet_id.stdout }}"

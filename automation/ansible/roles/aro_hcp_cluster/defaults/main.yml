@@ -1,0 +1,49 @@
+---
+become_override: false
+silent: false
+
+# Azure region — must be ARO HCP enabled (eastus2, westeurope, etc.)
+aro_hcp_cluster_location: eastus2
+
+# Cluster naming — uses guid for uniqueness
+aro_hcp_cluster_name: "{{ guid }}"
+aro_hcp_cluster_rg: "{{ aro_hcp_cluster_name }}-aro-hcp-rg"
+aro_hcp_cluster_nsg: "{{ aro_hcp_cluster_name }}-nsg"
+aro_hcp_cluster_vnet: "{{ aro_hcp_cluster_name }}-vnet"
+aro_hcp_cluster_worker_subnet: "{{ aro_hcp_cluster_name }}-worker-subnet"
+aro_hcp_cluster_integration_subnet: "{{ aro_hcp_cluster_name }}-vnet-integration-subnet"
+aro_hcp_cluster_kv: "{{ aro_hcp_cluster_name }}-kv"
+aro_hcp_cluster_managed_rg: "{{ aro_hcp_cluster_name }}-aro-hcp-managed-rg"
+aro_hcp_cluster_np: "{{ aro_hcp_cluster_name }}-np"
+
+# Cluster version
+aro_hcp_cluster_version: "4.22"
+aro_hcp_cluster_np_version: "4.22.1"
+aro_hcp_cluster_channel_group: stable
+
+# Node pool sizing
+aro_hcp_cluster_np_replicas: 2
+aro_hcp_cluster_np_vm_size: Standard_D4s_v6
+
+# Network
+aro_hcp_cluster_vnet_prefix: "10.0.0.0/16"
+aro_hcp_cluster_worker_subnet_prefix: "10.0.0.0/24"
+aro_hcp_cluster_integration_subnet_prefix: "10.0.1.0/24"
+
+# Azure credentials — passed from AgnosticV via sandbox
+aro_hcp_cluster_azure_subscription: "{{ azure_subscription }}"
+aro_hcp_cluster_azure_sp_id: "{{ azure_service_principal_id }}"
+aro_hcp_cluster_azure_sp_password: "{{ azure_service_principal_password }}"
+aro_hcp_cluster_azure_tenant: "{{ azure_tenant }}"
+
+# ARO HCP CLI extension URL
+aro_hcp_cluster_cli_extension_url: "https://aka.ms/aro-hcp-cli"
+
+# RBAC propagation delay (seconds) after Key Vault role assignment
+aro_hcp_cluster_rbac_delay: 30
+
+# Cluster create timeout (seconds)
+aro_hcp_cluster_create_timeout: 2400
+
+# Key Vault visibility (Public for sandbox)
+aro_hcp_cluster_kv_visibility: Public
