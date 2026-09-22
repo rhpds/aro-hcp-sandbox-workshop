@@ -24,18 +24,20 @@
     creates: /usr/local/bin/oc
 
 # Step 10: Break-glass kubeconfig
+- name: Ensure .kube directory exists
+  ansible.builtin.file:
+    path: "{{ aro_hcp_keycloak_kubeconfig_dir }}"
+    state: directory
+    mode: "0700"
+
 - name: Request break-glass admin kubeconfig
   ansible.builtin.command: >-
     az aro hcp cluster request-credential
     --admin
     --name "{{ aro_hcp_keycloak_cluster_name }}"
     --resource-group "{{ aro_hcp_keycloak_cluster_rg }}"
-    --file {{ ansible_env.HOME }}/.kube/config
+    --file {{ aro_hcp_keycloak_kubeconfig }}
   changed_when: true
-
-- name: Set KUBECONFIG
-  ansible.builtin.set_fact:
-    aro_hcp_keycloak_kubeconfig: "{{ ansible_env.HOME }}/.kube/config"
 
 - name: Verify cluster access
   ansible.builtin.command: oc whoami

@@ -19,6 +19,10 @@ aro_hcp_keycloak_admin_password: "{{ lookup('env', 'ADMIN_PASSWORD') | default('
 # oc CLI version to install
 aro_hcp_keycloak_oc_version: "4.22"
 
+# Kubeconfig path — must be accessible by the ansible_user (not root)
+aro_hcp_keycloak_kubeconfig_dir: "/home/{{ ansible_user | default('azure') }}/.kube"
+aro_hcp_keycloak_kubeconfig: "{{ aro_hcp_keycloak_kubeconfig_dir }}/config"
+
 # Keycloak deployment resources
 aro_hcp_keycloak_cpu_request: 500m
 aro_hcp_keycloak_cpu_limit: "1"
