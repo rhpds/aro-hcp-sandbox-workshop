@@ -28,6 +28,15 @@ Before inspecting the cluster, confirm that your terminal has the tooling and ac
 az account show --output table
 ----
 +
+Expected output:
++
+[source,text]
+----
+| EnvironmentName | HomeTenantId                         | IsDefault | Name        | State   | TenantDefaultDomain     | TenantDisplayName | TenantId                             |
+| --------------- | ------------------------------------ | --------- | ----------- | ------- | ----------------------- | ----------------- | ------------------------------------ |
+| AzureCloud      | 64dc69e4-d083-49fc-9569-ebece1dd1408 | True      | pool-01-316 | Enabled | redhat0.onmicrosoft.com | Red Hat, Inc      | 64dc69e4-d083-49fc-9569-ebece1dd1408 |
+----
++
 Confirm the output shows your lab subscription and that `State` is `Enabled`.
 
 . Verify OpenShift CLI access:
@@ -147,7 +156,7 @@ Each row maps a specific Kubernetes service account (in a specific namespace) to
 
 === Key Takeaways for Customer Conversations
 
-* *"Where are my master nodes?"* — In Red Hat's infrastructure. You pay for them through the subscription, but you never patch, monitor, or recover them. Your SRE team's on-call scope ends at the worker tier.
+* *"Where are my master nodes?"* — In Azure infrastructure. You pay for them through the subscription, but you never patch, monitor, or recover them. Your SRE team's on-call scope ends at the worker tier.
 
 * *"What happens if a control plane component fails?"* — Red Hat's SRE responds under the ARO SLA. The customer is not paged and does not need a runbook for etcd recovery.
 
