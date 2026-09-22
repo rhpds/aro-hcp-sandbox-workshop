@@ -30,7 +30,7 @@
   changed_when: false
 
 - name: Send user info to portal
-  agnosticd.core.agnosticd_user_info:
+  agnosticd_user_info:
     msg: |
       ARO HCP Sandbox Workshop - Environment Ready
 
