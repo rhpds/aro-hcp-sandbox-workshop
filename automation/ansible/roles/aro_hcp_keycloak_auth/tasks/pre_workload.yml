@@ -42,7 +42,13 @@
     KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
   register: r_whoami
   changed_when: false
-  failed_when: "'system:customer-break-glass' not in r_whoami.stdout"
+
+- name: Validate break-glass credentials
+  ansible.builtin.assert:
+    that:
+      - r_whoami.rc == 0
+      - r_whoami.stdout is search('break-glass')
+    fail_msg: "Expected break-glass user, got {{ r_whoami.stdout }}"
 
 - name: Pre workload tasks complete
   when: not silent | bool
