@@ -29,12 +29,12 @@
     --admin
     --name "{{ aro_hcp_keycloak_cluster_name }}"
     --resource-group "{{ aro_hcp_keycloak_cluster_rg }}"
-    --file /tmp/kubeconfig
+    --file {{ ansible_env.HOME }}/.kube/config
   changed_when: true
 
 - name: Set KUBECONFIG
   ansible.builtin.set_fact:
-    aro_hcp_keycloak_kubeconfig: /tmp/kubeconfig
+    aro_hcp_keycloak_kubeconfig: "{{ ansible_env.HOME }}/.kube/config"
 
 - name: Verify cluster access
   ansible.builtin.command: oc whoami
