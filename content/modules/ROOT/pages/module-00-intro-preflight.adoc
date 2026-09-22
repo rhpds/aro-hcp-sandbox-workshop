@@ -2,7 +2,7 @@
 
 == Value Proposition
 
-ARO HCP (Azure Red Hat OpenShift with Hosted Control Planes) eliminates the master node tier from a customer's Azure subscription entirely. Red Hat owns, operates, and secures the control plane — etcd, the API server, the scheduler, and the controller manager — in Red Hat's Azure subscription. The customer's operational surface begins at the worker node.
+ARO HCP (Azure Red Hat OpenShift with Hosted Control Planes) eliminates the master node tier from a customer's Azure subscription entirely. Red Hat owns, operates, and secures the control plane — etcd, the API server, the scheduler, and the controller manager — in Azure. The customer's operational surface begins at the worker node.
 
 For regulated industries — financial services, government, healthcare — this matters for two reasons. First, it removes a complex attack surface that most enterprise teams are not resourced to harden properly. Second, it replaces static Azure service principal credentials with Managed Identity and Workload Identity bindings, eliminating an entire class of credential-related compliance findings before a customer writes a single line of policy.
 
@@ -70,7 +70,7 @@ Filter specifically for Virtual Machine resources:
 az vm list --resource-group $RG --output table --query "[].{Name:name, Size:hardwareProfile.vmSize}"
 ----
 
-Every VM listed is a worker node. None will have a master, control-plane, or etcd naming pattern — those VMs run in Red Hat's Azure subscription and are invisible to yours.
+Every VM listed is a worker node. None will have a master, control-plane, or etcd naming pattern — those VMs run in Azure and are invisible to your subscription.
 
 === Confirm No etcd Disks
 
@@ -88,7 +88,7 @@ All disks belong to worker OS volumes. No etcd data disks are present.
 az network lb list --resource-group $RG --output table
 ----
 
-Any load balancers present are for worker-tier ingress. The API server load balancer lives in Red Hat's Azure subscription, not yours.
+Any load balancers present are for worker-tier ingress. The API server load balancer lives in Azure, not your subscription.
 
 == Operational Impact Calculation
 
@@ -141,7 +141,7 @@ Each row maps a specific Kubernetes service account (in a specific namespace) to
 
 === What You Learned
 
-* An ARO HCP cluster's Azure resource group contains **only worker-tier resources** — VMs, their OS disks, network interfaces, and the Managed Identity. Master VMs, etcd disks, and the API server load balancer are absent from the customer subscription because they run in Red Hat's Azure subscription.
+* An ARO HCP cluster's Azure resource group contains **only worker-tier resources** — VMs, their OS disks, network interfaces, and the Managed Identity. Master VMs, etcd disks, and the API server load balancer are absent from the customer subscription because they run in Azure.
 * The managed control plane model **scales the operational simplification linearly**: every additional cluster eliminates three master VMs from customer scope.
 * **Managed Identity and Workload Identity** replace static Azure service principal credentials with short-lived, auditable, namespace-scoped token exchanges — satisfying zero-static-credential requirements without any customer-side secret management.
 
