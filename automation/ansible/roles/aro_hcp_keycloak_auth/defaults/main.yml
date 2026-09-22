@@ -3,7 +3,7 @@ become_override: false
 silent: false
 
 # Cluster identity — must match aro_hcp_cluster role
-aro_hcp_keycloak_cluster_name: "{{ guid }}"
+aro_hcp_keycloak_cluster_name: "aro{{ guid }}"
 aro_hcp_keycloak_cluster_rg: "{{ aro_hcp_keycloak_cluster_name }}-aro-hcp-rg"
 
 # Keycloak deployment
