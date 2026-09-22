@@ -1,1 +1,156 @@
 = Introduction, Pre-flight & Cluster Resource Group
+
+== Value Proposition
+
+ARO HCP (Azure Red Hat OpenShift with Hosted Control Planes) eliminates the master node tier from a customer's Azure subscription entirely. Red Hat owns, operates, and secures the control plane — etcd, the API server, the scheduler, and the controller manager — in Red Hat's infrastructure. The customer's operational surface begins at the worker node.
+
+For regulated industries — financial services, government, healthcare — this matters for two reasons. First, it removes a complex attack surface that most enterprise teams are not resourced to harden properly. Second, it replaces static Azure service principal credentials with Managed Identity and Workload Identity bindings, eliminating an entire class of credential-related compliance findings before a customer writes a single line of policy.
+
+This lab proves both claims through live inspection: you will query the actual Azure resource group and confirm the absence of master infrastructure, then trace the identity bindings that replace it.
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Verify that an ARO HCP cluster's Azure resource group contains worker VMs but no master VMs, etcd disks, or control plane load balancers
+* Quantify the operational impact of the managed control plane model using a concrete multi-cluster calculation
+* Identify the Managed Identity and Workload Identity bindings that replace static Azure service principal credentials
+
+== Pre-flight: Confirm Environment Access
+
+Before inspecting the cluster, confirm that your terminal has the tooling and access required.
+
+. Open a terminal tab.
+. Verify Azure CLI authentication:
++
+[source,bash]
+----
+az account show --output table
+----
++
+Confirm the output shows your lab subscription and that `State` is `Enabled`.
+
+. Verify OpenShift CLI access:
++
+[source,bash]
+----
+oc whoami
+----
++
+You should see your lab username. If you see an error, check that the `KUBECONFIG` environment variable points to your lab kubeconfig file.
+
+. Confirm your assigned resource group name is available in your environment:
++
+[source,bash]
+----
+echo $RG
+----
++
+If the variable is empty, set it to the resource group name shown in your lab instructions before continuing.
+
+== Inspect the Azure Resource Group
+
+=== List All Resources
+
+Run a full resource listing for your lab resource group:
+
+[source,bash]
+----
+az resource list --resource-group $RG --output table
+----
+
+Scan the `Type` column. You will see entries for VMs, network interfaces, disks, and a Managed Identity. Note what is *not* there.
+
+=== Confirm No Master VMs
+
+Filter specifically for Virtual Machine resources:
+
+[source,bash]
+----
+az vm list --resource-group $RG --output table --query "[].{Name:name, Size:hardwareProfile.vmSize}"
+----
+
+Every VM listed is a worker node. None will have a master, control-plane, or etcd naming pattern — those VMs run in Red Hat's infrastructure and are invisible to your subscription.
+
+=== Confirm No etcd Disks
+
+[source,bash]
+----
+az disk list --resource-group $RG --output table --query "[].{Name:name, SizeGB:diskSizeGb}"
+----
+
+All disks belong to worker OS volumes. No etcd data disks are present.
+
+=== Confirm No Control Plane Load Balancers
+
+[source,bash]
+----
+az network lb list --resource-group $RG --output table
+----
+
+Any load balancers present are for worker-tier ingress. The API server load balancer lives in Red Hat's resource group, not yours.
+
+== Operational Impact Calculation
+
+The managed control plane model has a concrete cost and staffing implication. A standard self-managed OpenShift cluster requires three master VMs. With ARO HCP:
+
+* 5 clusters → 15 master VMs eliminated from customer-managed infrastructure
+* 15 clusters → 45 master VMs eliminated
+* 50 clusters → 150 master VMs eliminated
+
+At enterprise scale, this is a meaningful reduction in patching, monitoring, backup, and incident-response scope — and every one of those VMs was a potential pivot point for an attacker who compromised a node credential.
+
+== Examine Identity Bindings
+
+=== Managed Identity
+
+Locate the Managed Identity in your resource group:
+
+[source,bash]
+----
+az identity list --resource-group $RG --output table
+----
+
+Show its full configuration:
+
+[source,bash]
+----
+az identity show --resource-group $RG \
+  --name $(az identity list --resource-group $RG --query "[0].name" --output tsv) \
+  --output yaml
+----
+
+Note the `clientId` and `principalId` fields. This identity — not a static service principal credential — is what the cluster uses to call Azure APIs.
+
+=== Workload Identity Bindings
+
+List the federated credential configurations that allow cluster service accounts to assume the Managed Identity:
+
+[source,bash]
+----
+IDENTITY_NAME=$(az identity list --resource-group $RG --query "[0].name" --output tsv)
+az identity federated-credential list \
+  --resource-group $RG \
+  --identity-name $IDENTITY_NAME \
+  --output table
+----
+
+Each row maps a specific Kubernetes service account (in a specific namespace) to an Azure identity scope. No password or certificate is stored anywhere — the binding is purely declarative and auditable.
+
+== Summary
+
+=== What You Learned
+
+* An ARO HCP cluster's Azure resource group contains **only worker-tier resources** — VMs, their OS disks, network interfaces, and the Managed Identity. Master VMs, etcd disks, and the API server load balancer are absent because they run in Red Hat's managed infrastructure.
+* The managed control plane model **scales the operational simplification linearly**: every additional cluster eliminates three master VMs from customer scope.
+* **Managed Identity and Workload Identity** replace static Azure service principal credentials with short-lived, auditable, namespace-scoped token exchanges — satisfying zero-static-credential requirements without any customer-side secret management.
+
+=== Key Takeaways for Customer Conversations
+
+* *"Where are my master nodes?"* — In Red Hat's infrastructure. You pay for them through the subscription, but you never patch, monitor, or recover them. Your SRE team's on-call scope ends at the worker tier.
+
+* *"What happens if a control plane component fails?"* — Red Hat's SRE responds under the ARO SLA. The customer is not paged and does not need a runbook for etcd recovery.
+
+* *"How does this affect our compliance posture?"* — Managed Identity eliminates the service principal credential rotation finding that appears in nearly every Azure security baseline audit. Workload Identity provides namespace-scoped, auditable token exchange with no secret stored in the cluster.
+
+* *"Is this suitable for regulated workloads?"* — ARO HCP is FedRAMP-authorized for GovCloud regions and satisfies common FSI controls around credential management and infrastructure access. The absence of customer-managed control plane VMs reduces the scope of your own compliance boundary.
