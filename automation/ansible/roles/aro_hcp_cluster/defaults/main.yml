@@ -12,7 +12,7 @@ aro_hcp_cluster_nsg: "{{ aro_hcp_cluster_name }}-nsg"
 aro_hcp_cluster_vnet: "{{ aro_hcp_cluster_name }}-vnet"
 aro_hcp_cluster_worker_subnet: "{{ aro_hcp_cluster_name }}-worker-subnet"
 aro_hcp_cluster_integration_subnet: "{{ aro_hcp_cluster_name }}-vnet-integration-subnet"
-aro_hcp_cluster_kv: "{{ aro_hcp_cluster_name }}-kv"
+aro_hcp_cluster_kv: "kv{{ aro_hcp_cluster_name }}"
 aro_hcp_cluster_managed_rg: "{{ aro_hcp_cluster_name }}-aro-hcp-managed-rg"
 aro_hcp_cluster_np: "{{ aro_hcp_cluster_name }}-np"
 
