@@ -12,6 +12,7 @@
 
 # Step 9: Install oc CLI
 - name: Install oc CLI
+  become: true
   ansible.builtin.shell: |
     set -euo pipefail
     curl -sLo /tmp/openshift-client-linux.tar.gz \
