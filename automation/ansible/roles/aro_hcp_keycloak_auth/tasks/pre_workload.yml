@@ -24,9 +24,16 @@
     creates: /usr/local/bin/oc
 
 # Step 10: Break-glass kubeconfig
-- name: Ensure .kube directory exists
+- name: Ensure .kube directory exists for azure user
   ansible.builtin.file:
     path: "{{ aro_hcp_keycloak_kubeconfig_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Ensure .kube directory exists for root
+  become: true
+  ansible.builtin.file:
+    path: /root/.kube
     state: directory
     mode: "0700"
 
@@ -38,6 +45,14 @@
     --resource-group "{{ aro_hcp_keycloak_cluster_rg }}"
     --file {{ aro_hcp_keycloak_kubeconfig }}
   changed_when: true
+
+- name: Copy kubeconfig to root
+  become: true
+  ansible.builtin.copy:
+    src: "{{ aro_hcp_keycloak_kubeconfig }}"
+    dest: /root/.kube/config
+    remote_src: true
+    mode: "0600"
 
 - name: Verify cluster access
   ansible.builtin.command: oc whoami
