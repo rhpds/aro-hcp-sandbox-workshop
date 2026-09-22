@@ -1,5 +1,47 @@
-= My Lab Title
+= ARO HCP and OpenShift Sandboxed Containers: Control Plane and Kernel Isolation
 
-This project was created with the RHDP Publishing House template.
+== Lab Overview
 
-Run `/rhdp-publishing-house` in Claude Code to begin.
+This two-hour advanced lab walks through two of the most significant security and operational capabilities in the Azure Red Hat OpenShift portfolio: the managed control plane model delivered by ARO HCP (Hosted Control Planes), and kernel-level workload isolation delivered by OpenShift Sandboxed Containers with Kata Containers.
+
+The lab is structured as a single customer story. You begin by inspecting what ARO HCP removes from your operational scope — master VMs, etcd disks, control plane load balancers — and what it puts in its place: Managed Identity and Workload Identity bindings that eliminate static Azure credentials. You then build on that foundation by deploying OpenShift Sandboxed Containers on a dedicated Kata NodePool, troubleshooting the most common field failure, and finally proving hard kernel-level isolation through live kernel version comparison, cross-tenant /proc inspection, and host-escape attempts absorbed by the Kata guest VM.
+
+[cols="1,1"]
+|===
+|Audience |Field Engineers, Solution Architects, Consultants
+|Duration |2 hours
+|Level |Advanced
+|Prerequisites |Hands-on OpenShift experience (`oc` CLI, namespaces, YAML manifests); basic Azure and ARO familiarity (resource groups, Azure CLI); lab environment provisioned
+|===
+
+=== Modules
+
+[cols="1,4,1"]
+|===
+|Module |Title |Duration
+
+|0 |Introduction, Pre-flight & Cluster Resource Group |20 min
+|1 |Where Is the Control Plane? HyperShift CRDs + NodePool Scaling |20 min
+|2 |Kata-Dedicated NodePool & Sandboxed Containers Operator |20 min
+|3 |Install Kata, Break It, Fix It |20 min
+|4 |Proving Isolation: Kernel, Process, and Tenant Boundaries |20 min
+|5 |Build Pipeline — Host Escape Attempt |20 min
+|===
+
+== Why This Workshop Matters
+
+Enterprise customers evaluating ARO HCP and OpenShift Sandboxed Containers face two questions that are difficult to answer from documentation alone:
+
+*"How much operational scope does the managed control plane actually remove?"*
+
+Most teams understand that ARO HCP manages the control plane. Few have seen what that means concretely — a live resource group with no master VMs, no etcd disks, no API server load balancer. This lab makes that absence visible and quantifiable. Participants leave with the ability to run the same queries in a customer's environment and produce on-the-spot evidence that the managed model is working as described.
+
+*"What does 'kernel-level isolation' actually mean, and how hard is it to prove?"*
+
+The promise of Kata Containers is that each pod runs in its own lightweight VM with its own kernel. This lab proves that claim empirically: participants compare kernel versions across the host, a runc pod, and a kata pod; attempt cross-tenant /proc inspection; and execute host-escape payloads — a sysrq trigger and a kernel module load — that are absorbed by the Kata guest VM while all nodes remain healthy. The result is a repeatable, customer-ready demonstration that takes under ten minutes in a field setting.
+
+Together, these two capabilities address the two most common blockers for regulated-industry customers evaluating OpenShift on Azure: operational complexity at the control plane tier, and multi-tenant workload isolation at the kernel tier.
+
+== Ready to Start?
+
+xref:module-00-intro-preflight.adoc[Begin with Module 0 →]
