@@ -4,6 +4,10 @@
 
 ARO HCP (Azure Red Hat OpenShift with Hosted Control Planes) eliminates the master node tier from a customer's Azure subscription entirely. Red Hat owns, operates, and secures the control plane — etcd, the API server, the scheduler, and the controller manager — in Azure. The customer's operational surface begins at the worker node.
 
+image::aro-hcp-architecture.png[ARO HCP architecture diagram showing control plane in Microsoft Subscription and worker NodePools in Customer Subscription,800]
+
+The diagram above captures the architectural split. The *Microsoft Subscription* on the left holds the entire control plane — api-server, oauth, Ignition, router, and supporting components — operated by Red Hat and connected to the customer's infrastructure through a network interface. The *Customer Subscription* on the right contains only the data plane: worker nodes organised into NodePools, each independently scalable and configurable with its own VM SKU — general-purpose compute, memory-optimised, or GPU nodes. The boundary between the two subscriptions is exactly what the hands-on steps in this module verify: every resource on the left side of this diagram is absent from your Azure resource group.
+
 For regulated industries — financial services, government, healthcare — this matters for two reasons. First, it removes a complex attack surface that most enterprise teams are not resourced to harden properly. Second, it replaces static Azure service principal credentials with Managed Identity and Workload Identity bindings, eliminating an entire class of credential-related compliance findings before a customer writes a single line of policy.
 
 This lab proves both claims through live inspection: you will query the actual Azure resource group and confirm the absence of master infrastructure, then trace the identity bindings that replace it.
