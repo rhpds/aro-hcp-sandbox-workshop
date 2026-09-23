@@ -1,5 +1,5 @@
-name: modules
-title: My Lab Title
+name: aro-hcp-sandbox
+title: "ARO HCP Sandbox Workshop: Control Plane and Kernel Isolation"
 version: ~
 nav:
   - modules/ROOT/nav.adoc
