@@ -4,9 +4,9 @@
 
 Every OpenShift administrator has an intuition about what a cluster contains: master nodes running the API server, scheduler, etcd, and controller manager, alongside worker nodes running workloads. ARO HCP breaks that intuition deliberately. The HostedCluster CRD is present — you can describe it, inspect its spec, and see the control plane endpoint — but the pods that implement it are invisible from the customer's context. They run in Red Hat's managed infrastructure, outside the customer's view.
 
-This is the operational boundary that defines ARO HCP's support model. Everything above the NodePool — the HostedCluster, the control plane components, the API server load balancer — is Red Hat's responsibility. Everything at and below the NodePool — worker node configuration, workloads, namespaces — is the customer's. Understanding exactly where that line falls is essential for field conversations about support escalation, incident response, and SLA scope.
+The NodePool object defines exactly where that boundary falls. Everything above the NodePool — the HostedCluster, the control plane components, the API server load balancer — is Red Hat's responsibility. Everything at and below the NodePool — worker node configuration, workloads, namespaces — is the customer's. Understanding this line is essential for field conversations about support escalation, incident response, and SLA scope.
 
-This module makes the boundary concrete in two ways. First, you inspect the HyperShift CRDs and confirm empirically that no control plane pods are visible in the customer's context. Second, you exercise the customer's side of the boundary directly: scaling a NodePool and watching ARO HCP translate a single declarative Kubernetes API call into an Azure VM creation — without ever touching the Azure compute API yourself.
+This module makes the boundary concrete: you inspect the HyperShift CRDs and confirm empirically that no control plane pods are visible in the customer's context, then exercise the customer's side of the boundary directly by scaling a NodePool and watching ARO HCP translate a single declarative Kubernetes API call into an Azure VM creation — without ever touching the Azure compute API yourself.
 
 == Learning Objectives
 
@@ -123,7 +123,7 @@ Review these fields:
 
 === Verify Operator-Managed Credentials
 
-A common concern in enterprise environments is credential rotation: who holds the Azure service principal, how often does it rotate, and who is responsible if it expires? ARO HCP eliminates this concern by making credentials short-lived and operator-managed.
+Module 0 demonstrated that ARO HCP uses Managed Identity and Workload Identity at the Azure layer — no static Azure service principal. This step shows the Kubernetes-side evidence of the same principle: the secrets that back control plane access are owned and rotated by the HyperShift operator, not the customer.
 
 . List the secrets in the clusters namespace:
 +
@@ -139,12 +139,7 @@ oc get secrets -n clusters
 oc describe secret $CLUSTER_NAME-admin-kubeconfig -n clusters
 ----
 +
-Note the `Annotations` section. Secrets managed by the HyperShift operator carry annotations indicating operator ownership and automatic rotation. The customer does not rotate these — the operator does.
-
-[IMPORTANT]
-====
-This is a significant compliance answer for FSI and government customers. The credential lifecycle for control plane access is owned by Red Hat's operator — it is not a static secret that a customer team must track, rotate, and audit.
-====
+Note the `Annotations` section. Secrets managed by the HyperShift operator carry annotations indicating operator ownership and automatic rotation. The customer does not rotate these — the operator does. This is the Kubernetes-layer complement to the Azure Managed Identity binding you examined in Module 0.
 
 == Section 3 — NodePool Scale-Out and Azure Cross-Reference
 
@@ -244,10 +239,6 @@ The additional VM will be deprovisioned and removed from the Azure resource grou
 * **One Kubernetes API call drives Azure VM provisioning.** Patching `spec.replicas` on the NodePool was the only action required. The HyperShift operator handled every Azure API call transparently — VM creation, NIC allocation, disk provisioning.
 
 === Key Takeaways for Customer Conversations
-
-*"Who manages the API server if it goes down?"*
-
-Red Hat's SRE. The API server runs in Red Hat's managed infrastructure and is covered by the ARO SLA. The customer is not paged, does not have a runbook for it, and does not have visibility into the pods. The only customer-observable signal is that `oc` commands stop responding — at which point the correct action is to open a Red Hat support case, not to investigate pod logs.
 
 *"How do I scale my cluster?"*
 
