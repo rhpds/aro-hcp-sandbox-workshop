@@ -19,15 +19,13 @@ By the end of this module you will be able to:
 == Pre-flight: Confirm Environment Access
 
 Before inspecting the cluster, confirm that your terminal has the tooling and access required.
-+
-[source,sh,role=execute]   
+[source,bash,role=execute]   
 ----
 oc login https://api.rosa-4fgbq.qrdf.p1.openshiftapps.com:6443 --username {openshift_admin_user} --password {openshift_admin_password}
 ----
-+
 . Verify Azure CLI authentication:
 +
-[source,bash]
+[source,bash,role=execute]
 ----
 az account show --output table
 ----
@@ -45,18 +43,17 @@ Confirm the output shows your lab subscription and that `State` is `Enabled`.
 
 . Verify OpenShift CLI access:
 +
-[source,bash]
+[source,bash,role=execute]
 ----
 oc whoami
 ----
 +
-You should see your lab username. If you see an error, check that the `KUBECONFIG` environment variable points to your lab kubeconfig file.
-
+You should see your lab username.
 . Confirm your assigned resource group name is available in your environment:
 +
-[source,bash]
+[source,bash,role=execute]
 ----
-echo $RG
+echo {azure_resource_group}
 ----
 +
 If the variable is empty, set it to the resource group name shown in your lab instructions before continuing.
@@ -67,9 +64,9 @@ If the variable is empty, set it to the resource group name shown in your lab in
 
 Run a full resource listing for your lab resource group:
 
-[source,bash]
+[source,bash,role=execute]
 ----
-az resource list --resource-group $RG --output table
+az resource list --resource-group {azure_resource_group} --output table
 ----
 
 Scan the `Type` column. You will see entries for VMs, network interfaces, disks, and a Managed Identity. Note what is *not* there.
@@ -78,18 +75,18 @@ Scan the `Type` column. You will see entries for VMs, network interfaces, disks,
 
 Filter specifically for Virtual Machine resources:
 
-[source,bash]
+[source,bash,role=execute]
 ----
-az vm list --resource-group $RG --output table --query "[].{Name:name, Size:hardwareProfile.vmSize}"
+az vm list --resource-group {azure_resource_group} --output table --query "[].{Name:name, Size:hardwareProfile.vmSize}"
 ----
 
 Every VM listed is a worker node. None will have a master, control-plane, or etcd naming pattern — those VMs run in Azure and are invisible to your subscription.
 
 === Confirm No etcd Disks
 
-[source,bash]
+[source,bash,role=execute]
 ----
-az disk list --resource-group $RG --output table --query "[].{Name:name, SizeGB:diskSizeGb}"
+az disk list --resource-group {azure_resource_group} --output table --query "[].{Name:name, SizeGB:diskSizeGb}"
 ----
 
 All disks belong to worker OS volumes. No etcd data disks are present.
@@ -98,7 +95,7 @@ All disks belong to worker OS volumes. No etcd data disks are present.
 
 [source,bash]
 ----
-az network lb list --resource-group $RG --output table
+az network lb list --resource-group {azure_resource_group} --output table
 ----
 
 Any load balancers present are for worker-tier ingress. The API server load balancer lives in Azure, not your subscription.
