@@ -93,7 +93,7 @@ All disks belong to worker OS volumes. No etcd data disks are present.
 
 === Confirm No Control Plane Load Balancers
 
-[source,bash]
+[source,bash,role=execute]
 ----
 az network lb list --resource-group {azure_resource_group} --output table
 ----
@@ -116,17 +116,17 @@ At enterprise scale, this is a meaningful reduction in patching, monitoring, bac
 
 Locate the Managed Identity in your resource group:
 
-[source,bash]
+[source,bash,role=execute]
 ----
-az identity list --resource-group $RG --output table
+az identity list --resource-group {azure_resource_group} --output table
 ----
 
 Show its full configuration:
 
-[source,bash]
+[source,bash,role=execute]
 ----
 az identity show --resource-group $RG \
-  --name $(az identity list --resource-group $RG --query "[0].name" --output tsv) \
+  --name $(az identity list --resource-group {azure_resource_group} --query "[0].name" --output tsv) \
   --output yaml
 ----
 
@@ -136,9 +136,9 @@ Note the `clientId` and `principalId` fields. This identity — not a static ser
 
 List the federated credential configurations that allow cluster service accounts to assume the Managed Identity:
 
-[source,bash]
+[source,bash,role=execute]
 ----
-IDENTITY_NAME=$(az identity list --resource-group $RG --query "[0].name" --output tsv)
+IDENTITY_NAME=$(az identity list --resource-group {azure_resource_group} --query "[0].name" --output tsv)
 az identity federated-credential list \
   --resource-group $RG \
   --identity-name $IDENTITY_NAME \
