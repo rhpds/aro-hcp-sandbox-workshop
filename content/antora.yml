@@ -1,4 +1,4 @@
-name: aro-hcp-sandbox
+name: modules
 title: "ARO HCP Sandbox Workshop: Control Plane and Kernel Isolation"
 version: ~
 nav:

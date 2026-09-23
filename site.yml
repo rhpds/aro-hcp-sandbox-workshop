@@ -2,7 +2,7 @@
 site:
   title: ARO HCP Sandbox Workshop
   url: https://rhpds.github.io/aro-hcp-sandbox-workshop
-  start_page: aro-hcp-sandbox::index.adoc
+  start_page: modules::index.adoc
 
 content:
   sources:
