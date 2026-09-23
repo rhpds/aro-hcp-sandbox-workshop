@@ -1,0 +1,16 @@
+---
+- name: Install helm binary
+  ansible.builtin.get_url:
+    url: "{{ setup_bastion_helm_url }}"
+    dest: "{{ setup_bastion_helm_dest }}"
+    mode: "0755"
+  become: true
+
+- name: Verify helm installation
+  ansible.builtin.command: "{{ setup_bastion_helm_dest }} version --short"
+  changed_when: false
+  register: r_helm_version
+
+- name: Print helm version
+  ansible.builtin.debug:
+    msg: "Helm installed: {{ r_helm_version.stdout }}"

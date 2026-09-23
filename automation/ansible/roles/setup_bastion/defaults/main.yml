@@ -1,0 +1,6 @@
+---
+become_override: false
+silent: false
+
+setup_bastion_helm_url: "https://rhdp-public.s3.amazonaws.com/binaries/helm/helm-v4.2.4-linux-amd64"
+setup_bastion_helm_dest: /usr/local/bin/helm

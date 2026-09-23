@@ -1,0 +1,4 @@
+---
+- name: Setup bastion post_workload
+  ansible.builtin.debug:
+    msg: "Bastion setup complete"

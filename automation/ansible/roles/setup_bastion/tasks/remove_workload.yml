@@ -1,0 +1,6 @@
+---
+- name: Remove helm binary
+  ansible.builtin.file:
+    path: "{{ setup_bastion_helm_dest }}"
+    state: absent
+  become: true

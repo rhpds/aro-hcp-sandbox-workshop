@@ -1,0 +1,4 @@
+---
+- name: Setup bastion pre_workload
+  ansible.builtin.debug:
+    msg: "Setting up bastion tools"
