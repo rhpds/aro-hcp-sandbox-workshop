@@ -14,5 +14,9 @@ ui:
     url: https://github.com/rhpds/rhdp_showroom_theme/releases/download/v2.0.3/ui-bundle.zip
     snapshot: true
 
+antora:
+  extensions:
+    - require: '@andrew-jones/antora-tabs-extension'
+
 output:
   dir: ./www
