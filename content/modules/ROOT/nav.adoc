@@ -1,2 +1,3 @@
 * xref:index.adoc[Lab Overview]
 * xref:module-00-intro-preflight.adoc[Module 0 : Introduction, Pre-flight & Cluster Resource Group]
+* xref:module-01-control-plane-nodepool.adoc[Module 1 : Where Is the Control Plane? HyperShift CRDs + NodePool Scaling]

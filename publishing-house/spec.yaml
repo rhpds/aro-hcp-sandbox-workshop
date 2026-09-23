@@ -36,7 +36,7 @@ spec:
     - id: module-01
       title: "Where Is the Control Plane? HyperShift CRDs + NodePool Scaling"
       duration_min: 20
-      status: not_started
+      status: in_progress
     - id: module-02
       title: "Kata-Dedicated NodePool & Sandboxed Containers Operator"
       duration_min: 20

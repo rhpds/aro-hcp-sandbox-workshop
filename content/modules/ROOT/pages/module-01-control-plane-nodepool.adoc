@@ -1,0 +1,266 @@
+= Where Is the Control Plane? HyperShift CRDs + NodePool Scaling
+
+== Value Proposition
+
+Every OpenShift administrator has an intuition about what a cluster contains: master nodes running the API server, scheduler, etcd, and controller manager, alongside worker nodes running workloads. ARO HCP breaks that intuition deliberately. The HostedCluster CRD is present — you can describe it, inspect its spec, and see the control plane endpoint — but the pods that implement it are invisible from the customer's context. They run in Red Hat's managed infrastructure, outside the customer's view.
+
+This is the operational boundary that defines ARO HCP's support model. Everything above the NodePool — the HostedCluster, the control plane components, the API server load balancer — is Red Hat's responsibility. Everything at and below the NodePool — worker node configuration, workloads, namespaces — is the customer's. Understanding exactly where that line falls is essential for field conversations about support escalation, incident response, and SLA scope.
+
+This module makes the boundary concrete in two ways. First, you inspect the HyperShift CRDs and confirm empirically that no control plane pods are visible in the customer's context. Second, you exercise the customer's side of the boundary directly: scaling a NodePool and watching ARO HCP translate a single declarative Kubernetes API call into an Azure VM creation — without ever touching the Azure compute API yourself.
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Verify that the HostedCluster CRD is present and that control plane pods are not visible in the customer's cluster context
+* Identify the NodePool object as the customer's primary operational surface in ARO HCP and explain what the support boundary means in practice
+* Verify that kubeconfig and Azure credential secrets are short-lived and operator-managed, not static credentials held by the customer
+* Scale a worker NodePool and trace the resulting Azure VM provisioning through the Kubernetes declarative API
+* Explain to a customer why they never need to call the Azure compute API directly to scale their cluster
+
+== Section 1 — HostedCluster CRD Inspection
+
+=== Discover the HostedCluster Object
+
+The HostedCluster CRD is the top-level representation of your ARO HCP cluster in the HyperShift operator model.
+
+. Capture your cluster name from the environment:
++
+[source,bash,role=execute]
+----
+echo $CLUSTER_NAME
+----
++
+If the variable is empty, retrieve it from the Azure CLI:
++
+[source,bash,role=execute]
+----
+az aro hcp cluster list --output table
+----
+
+. List all HostedCluster objects visible in the cluster:
++
+[source,bash,role=execute]
+----
+oc get hostedcluster -A
+----
++
+You will see your cluster listed with its current state and version. The `NAMESPACE` column shows the management namespace used by the HyperShift operator.
+
+. Describe the HostedCluster object and review its spec:
++
+[source,bash,role=execute]
+----
+oc describe hostedcluster $CLUSTER_NAME -n clusters
+----
++
+Note the following fields in the output:
++
+* `Status.ControlPlaneEndpoint` — the API server URL. This is the endpoint you used in the `oc login` step of Module 0. It resolves to infrastructure in Azure managed by Red Hat.
+* `Spec.Platform.Azure` — the Azure infrastructure references (resource group, VNet, subnet) that define where worker nodes are provisioned.
+* `Status.Conditions` — the health conditions that Red Hat's SRE monitors; customers are not expected to act on these.
+
+=== Confirm the Empty Control Plane View
+
+In a self-managed OpenShift cluster, the `kube-system` and `openshift-etcd` namespaces contain running control plane pods. In ARO HCP, those pods run in Red Hat's managed infrastructure and are not visible from the customer's context.
+
+. List all namespaces visible in the customer cluster:
++
+[source,bash,role=execute]
+----
+oc get namespaces
+----
++
+Notice that namespaces like `openshift-etcd`, `openshift-kube-apiserver`, and `openshift-kube-controller-manager` — which contain control plane pods in self-managed OpenShift — are absent or empty.
+
+. Attempt to list pods in the etcd namespace:
++
+[source,bash,role=execute]
+----
+oc get pods -n openshift-etcd
+----
++
+[NOTE]
+====
+In a self-managed OpenShift cluster, this namespace contains three etcd pods running the distributed key-value store for all cluster state. In ARO HCP, these pods run in Red Hat's infrastructure and are not visible from the customer's context. The namespace may be absent or contain no running pods.
+====
+
+. Confirm the API server pods are equally absent:
++
+[source,bash,role=execute]
+----
+oc get pods -n openshift-kube-apiserver
+----
++
+This is the second line of evidence: the control plane exists — the API server is responding — but its implementation is outside the customer's view.
+
+== Section 2 — NodePool Object and the Operational Boundary
+
+=== Inspect the NodePool
+
+The NodePool object defines the customer's worker nodes: their count, VM SKU, OpenShift version, and update strategy. This is the primary operational surface for day-2 cluster management.
+
+. List all NodePool objects:
++
+[source,bash,role=execute]
+----
+oc get nodepools -A
+----
+
+. Describe the default worker NodePool:
++
+[source,bash,role=execute]
+----
+oc describe nodepool $CLUSTER_NAME -n clusters
+----
++
+Review these fields:
++
+* `Spec.Replicas` — the desired worker count. Changing this value is how you scale the cluster.
+* `Spec.Platform.Azure.VMSize` — the Azure VM SKU for workers (Standard_D4s_v5 in this lab). The customer controls this; Red Hat does not choose it.
+* `Spec.Release.Image` — the OpenShift version for this NodePool. Workers can be at a different version than the control plane during a rolling upgrade.
+* `Status.Conditions` — NodePool-level health. These conditions are in customer scope; a NotReady NodePool is the customer's responsibility to investigate.
+
+=== Verify Operator-Managed Credentials
+
+A common concern in enterprise environments is credential rotation: who holds the Azure service principal, how often does it rotate, and who is responsible if it expires? ARO HCP eliminates this concern by making credentials short-lived and operator-managed.
+
+. List the secrets in the clusters namespace:
++
+[source,bash,role=execute]
+----
+oc get secrets -n clusters
+----
+
+. Examine the kubeconfig secret for your cluster:
++
+[source,bash,role=execute]
+----
+oc describe secret $CLUSTER_NAME-admin-kubeconfig -n clusters
+----
++
+Note the `Annotations` section. Secrets managed by the HyperShift operator carry annotations indicating operator ownership and automatic rotation. The customer does not rotate these — the operator does.
+
+[IMPORTANT]
+====
+This is a significant compliance answer for FSI and government customers. The credential lifecycle for control plane access is owned by Red Hat's operator — it is not a static secret that a customer team must track, rotate, and audit.
+====
+
+== Section 3 — NodePool Scale-Out and Azure Cross-Reference
+
+This section demonstrates the operational model in action: a single declarative Kubernetes API call drives Azure VM provisioning transparently.
+
+=== Record the Baseline
+
+. Capture the current replica count before scaling:
++
+[source,bash,role=execute]
+----
+CURRENT_REPLICAS=$(oc get nodepool $CLUSTER_NAME -n clusters -o jsonpath='{.spec.replicas}')
+echo "Current replicas: $CURRENT_REPLICAS"
+----
+
+. Record the current VMs in the resource group:
++
+[source,bash,role=execute]
+----
+az vm list --resource-group $RG --output table --query "[].{Name:name, Size:hardwareProfile.vmSize}"
+----
++
+Note the number of VMs. After scaling, one additional VM will appear here.
+
+=== Scale the NodePool
+
+. Scale the worker NodePool up by one replica:
++
+[source,bash,role=execute]
+----
+oc patch nodepool $CLUSTER_NAME -n clusters \
+  --type merge \
+  -p "{\"spec\":{\"replicas\":$((CURRENT_REPLICAS + 1))}}"
+----
+
+. Watch the NodePool status update in real time:
++
+[source,bash,role=execute]
+----
+oc get nodepool $CLUSTER_NAME -n clusters -w
+----
++
+Observe the condition transitions: the NodePool moves from its current state through `UpdatingConfig` or `Provisioning` conditions as ARO HCP processes the replica change. Press `Ctrl+C` to stop watching once you see activity.
+
+=== Cross-Reference in Azure
+
+. While the NodePool is scaling, query the Azure resource group for new VMs:
++
+[source,bash,role=execute]
+----
+az vm list --resource-group $RG --output table --query "[].{Name:name, Size:hardwareProfile.vmSize, State:provisioningState}"
+----
++
+Refresh this command every 30–60 seconds. You will see a new VM appear with `provisioningState: Creating` or `Updating`, then transition to `Succeeded`.
+
+[NOTE]
+====
+You made one Kubernetes API call — patching the `spec.replicas` field — and Azure provisioned a VM. You never called `az vm create`, never allocated a NIC, never configured a disk. The HyperShift operator translated the declarative intent into every required Azure API call. This is the operational model ARO HCP delivers at every scale.
+====
+
+. Confirm the new node joins the cluster:
++
+[source,bash,role=execute]
+----
+oc get nodes -w
+----
++
+Wait for the new node to appear in `Ready` status, then press `Ctrl+C`.
+
+=== Restore the Baseline
+
+. Scale the NodePool back to the original replica count:
++
+[source,bash,role=execute]
+----
+oc patch nodepool $CLUSTER_NAME -n clusters \
+  --type merge \
+  -p "{\"spec\":{\"replicas\":$CURRENT_REPLICAS}}"
+----
+
+. Confirm the NodePool returns to baseline:
++
+[source,bash,role=execute]
+----
+oc get nodepool $CLUSTER_NAME -n clusters
+----
++
+The additional VM will be deprovisioned and removed from the Azure resource group.
+
+== Summary
+
+=== What You Learned
+
+* **The HostedCluster CRD is visible but the control plane is not.** The API object exists and is fully described, but the pods that implement the API server, scheduler, and etcd run in Red Hat's managed infrastructure and are not visible from the customer's cluster context. This is the ARO HCP model in its simplest form.
+* **The NodePool object is the customer's operational surface.** Every worker scaling action, VM SKU selection, and NodePool version update goes through this object. Everything above it — HostedCluster, control plane — is Red Hat's responsibility.
+* **Credentials are short-lived and operator-managed.** The kubeconfig and Azure credential secrets for the control plane are owned and rotated by the HyperShift operator. Customers are not responsible for their lifecycle.
+* **One Kubernetes API call drives Azure VM provisioning.** Patching `spec.replicas` on the NodePool was the only action required. The HyperShift operator handled every Azure API call transparently — VM creation, NIC allocation, disk provisioning.
+
+=== Key Takeaways for Customer Conversations
+
+*"Who manages the API server if it goes down?"*
+
+Red Hat's SRE. The API server runs in Red Hat's managed infrastructure and is covered by the ARO SLA. The customer is not paged, does not have a runbook for it, and does not have visibility into the pods. The only customer-observable signal is that `oc` commands stop responding — at which point the correct action is to open a Red Hat support case, not to investigate pod logs.
+
+*"How do I scale my cluster?"*
+
+Patch the `spec.replicas` field on the NodePool object. That is the entire action. No Azure portal, no `az vm create`, no capacity reservation to manage separately. The HyperShift operator translates the declarative intent into every required Azure API call.
+
+*"What if I need a different VM size for my workers?"*
+
+Update `spec.platform.azure.vmSize` on the NodePool. ARO HCP will provision new nodes with the new SKU and drain the old ones. The control plane is unaffected — it runs independently and is not sized by the customer.
+
+*"Who owns the Azure credentials used by the cluster?"*
+
+The HyperShift operator owns and rotates them. Customers do not hold static Azure service principal credentials for cluster operations. This satisfies zero-static-credential requirements at the cluster infrastructure layer and eliminates the credential rotation audit finding that appears in most Azure security baseline reviews.
+
+*"How do I know when my NodePool is unhealthy?"*
+
+Check `Status.Conditions` on the NodePool object. NodePool conditions are in customer scope — if a NodePool is reporting `NotReady`, it is the customer's responsibility to investigate (typically a VM quota issue, a subnet routing problem, or a failing bootstrap). HostedCluster conditions, by contrast, are Red Hat's responsibility.
