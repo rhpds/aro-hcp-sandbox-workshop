@@ -23,10 +23,7 @@ By the end of this module you will be able to:
 == Pre-flight: Confirm Environment Access
 
 Before inspecting the cluster, confirm that your terminal has the tooling and access required.
-[source,bash,role=execute]   
-----
-oc login {openshift_api_url} --username {openshift_admin_user} --password {openshift_admin_password}
-----
+
 . Verify Azure CLI authentication:
 +
 [source,bash,role=execute]
