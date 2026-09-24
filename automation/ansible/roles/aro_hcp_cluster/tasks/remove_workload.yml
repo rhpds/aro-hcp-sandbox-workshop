@@ -38,12 +38,32 @@
     az aro hcp cluster delete
     --name "{{ aro_hcp_cluster_name }}"
     --resource-group "{{ aro_hcp_cluster_rg }}"
-    --yes
-  async: 3600
-  poll: 30
+    --yes --no-wait
   register: r_delete_cluster
   changed_when: true
   failed_when: false
+
+- name: Wait for cluster deletion (max 120 attempts)
+  ansible.builtin.command: >-
+    az aro hcp cluster show
+    --name "{{ aro_hcp_cluster_name }}"
+    --resource-group "{{ aro_hcp_cluster_rg }}"
+    --query "properties.provisioningState" -o tsv
+  register: r_cluster_state
+  until: r_cluster_state.rc != 0
+  retries: 120
+  delay: 30
+  failed_when: false
+  changed_when: false
+
+- name: Report cluster deletion status
+  ansible.builtin.debug:
+    msg: >-
+      {% if r_cluster_state.rc != 0 %}
+      Cluster {{ aro_hcp_cluster_name }} deleted successfully.
+      {% else %}
+      Cluster {{ aro_hcp_cluster_name }} still deleting after 120 attempts, continuing with destroy.
+      {% endif %}
 
 - name: Delete resource group
   ansible.builtin.command: >-
