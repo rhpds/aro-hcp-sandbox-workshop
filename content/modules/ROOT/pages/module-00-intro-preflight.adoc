@@ -70,7 +70,7 @@ Run a full resource listing for your lab resource group:
 az resource list --resource-group {azure_resource_group} --output table
 ----
 
-Scan the `Type` column. You will see entries for VMs, network interfaces, disks, and a Managed Identity. Note what is *not* there.
+Scan the `Type` column. You will see entries for dns, storage accounts, public ip address, network security groups, virtual networks, network interfaces etc.
 
 === Confirm No Master VMs
 
@@ -115,19 +115,24 @@ At enterprise scale, this is a meaningful reduction in patching, monitoring, bac
 
 === Managed Identity
 
-Locate the Managed Identity in your resource group:
+Locate the Managed Identity resource in your resource group using the same `az resource list` command you used earlier, filtered by resource type:
 
 [source,bash,role=execute]
 ----
-az identity list --resource-group {azure_resource_group} --output table
+az resource list --resource-group {azure_resource_group} \
+  --resource-type Microsoft.ManagedIdentity/userAssignedIdentities \
+  --output table
 ----
 
-Show its full configuration:
+Retrieve its full configuration by name:
 
 [source,bash,role=execute]
 ----
-az identity show --resource-group $RG \
-  --name $(az identity list --resource-group {azure_resource_group} --query "[0].name" --output tsv) \
+IDENTITY_NAME=$(az resource list --resource-group {azure_resource_group} \
+  --resource-type Microsoft.ManagedIdentity/userAssignedIdentities \
+  --query "[0].name" --output tsv)
+az identity show --resource-group {azure_resource_group} \
+  --name $IDENTITY_NAME \
   --output yaml
 ----
 
@@ -139,9 +144,8 @@ List the federated credential configurations that allow cluster service accounts
 
 [source,bash,role=execute]
 ----
-IDENTITY_NAME=$(az identity list --resource-group {azure_resource_group} --query "[0].name" --output tsv)
 az identity federated-credential list \
-  --resource-group $RG \
+  --resource-group {azure_resource_group} \
   --identity-name $IDENTITY_NAME \
   --output table
 ----
