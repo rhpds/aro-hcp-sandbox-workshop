@@ -18,7 +18,7 @@ By the end of this module you will be able to:
 
 * Verify that an ARO HCP cluster's Azure resource group contains worker VMs but no master VMs, etcd disks, or control plane load balancers
 * Quantify the operational impact of the managed control plane model using a concrete multi-cluster calculation
-* Identify the Managed Identity and Workload Identity bindings that replace static Azure service principal credentials
+* Identify the OIDC Workload Identity model that replaces static Azure service principal credentials, using the cluster's OIDC discovery document as evidence
 
 == Pre-flight: Confirm Environment Access
 
@@ -113,9 +113,13 @@ At enterprise scale, this is a meaningful reduction in patching, monitoring, bac
 
 == Examine Identity Bindings
 
-=== Managed Identity
+=== How ARO HCP Authenticates to Azure
 
-Locate the Managed Identity resource in your resource group using the same `az resource list` command you used earlier, filtered by resource type:
+In traditional ARO, the cluster holds a static Azure service principal credential — a client ID and secret stored in a Kubernetes secret. In ARO HCP, there is no such credential and no user-assigned managed identity in your resource group.
+
+ARO HCP uses *OIDC Workload Identity Federation*. The cluster's API server acts as an OIDC issuer. Cluster components present short-lived Kubernetes service account tokens signed by that issuer; Azure AD validates them against the cluster's OIDC discovery document and issues short-lived, scoped Azure access tokens in return. No password, no certificate, and no secret is stored anywhere in the customer's cluster or subscription.
+
+=== Confirm No Identity Resources in Your Resource Group
 
 [source,bash,role=execute]
 ----
@@ -124,33 +128,18 @@ az resource list --resource-group {azure_resource_group} \
   --output table
 ----
 
-Retrieve its full configuration by name:
+The result is empty. In ARO HCP, this is correct. The absence of a user-assigned managed identity in your resource group is not a misconfiguration — it is evidence that the OIDC model is working. No static Azure credential exists in your subscription for this cluster.
+
+=== Locate the OIDC Issuer
+
+The cluster's OIDC discovery document is served at a standard path on the API server:
 
 [source,bash,role=execute]
 ----
-IDENTITY_NAME=$(az resource list --resource-group {azure_resource_group} \
-  --resource-type Microsoft.ManagedIdentity/userAssignedIdentities \
-  --query "[0].name" --output tsv)
-az identity show --resource-group {azure_resource_group} \
-  --name $IDENTITY_NAME \
-  --output yaml
+oc get --raw '/.well-known/openid-configuration' | jq .
 ----
 
-Note the `clientId` and `principalId` fields. This identity — not a static service principal credential — is what the cluster uses to call Azure APIs.
-
-=== Workload Identity Bindings
-
-List the federated credential configurations that allow cluster service accounts to assume the Managed Identity:
-
-[source,bash,role=execute]
-----
-az identity federated-credential list \
-  --resource-group {azure_resource_group} \
-  --identity-name $IDENTITY_NAME \
-  --output table
-----
-
-Each row maps a specific Kubernetes service account (in a specific namespace) to an Azure identity scope. No password or certificate is stored anywhere — the binding is purely declarative and auditable.
+The `issuer` field in the response is the trust anchor. Azure AD has a federated credential configuration that points to this issuer — when a cluster component presents a service account token, Azure AD validates the signature against the OIDC discovery document at this URL and issues a scoped, short-lived access token. Red Hat provisions and operates this endpoint; the customer neither owns it nor rotates anything backed by it.
 
 == Summary
 
@@ -158,7 +147,7 @@ Each row maps a specific Kubernetes service account (in a specific namespace) to
 
 * An ARO HCP cluster's Azure resource group contains **only worker-tier resources** — VMs, their OS disks, network interfaces, and the Managed Identity. Master VMs, etcd disks, and the API server load balancer are absent from the customer subscription because they run in Azure.
 * The managed control plane model **scales the operational simplification linearly**: every additional cluster eliminates three master VMs from customer scope.
-* **Managed Identity and Workload Identity** replace static Azure service principal credentials with short-lived, auditable, namespace-scoped token exchanges — satisfying zero-static-credential requirements without any customer-side secret management.
+* **OIDC Workload Identity Federation** replaces static Azure service principal credentials with short-lived token exchanges backed by the cluster's OIDC issuer — satisfying zero-static-credential requirements without any customer-side secret management.
 
 === Key Takeaways for Customer Conversations
 
@@ -166,6 +155,6 @@ Each row maps a specific Kubernetes service account (in a specific namespace) to
 
 * *"What happens if a control plane component fails?"* — Red Hat's SRE responds under the ARO SLA. The customer is not paged and does not need a runbook for etcd recovery.
 
-* *"How does this affect our compliance posture?"* — Managed Identity eliminates the service principal credential rotation finding that appears in nearly every Azure security baseline audit. Workload Identity provides namespace-scoped, auditable token exchange with no secret stored in the cluster.
+* *"How does this affect our compliance posture?"* — OIDC Workload Identity eliminates the service principal credential rotation finding that appears in nearly every Azure security baseline audit. Short-lived, scoped token exchange with no secret stored in the cluster satisfies zero-static-credential requirements out of the box.
 
 * *"Is this suitable for regulated workloads?"* — ARO HCP is FedRAMP-authorized for GovCloud regions and satisfies common FSI controls around credential management and infrastructure access. The absence of customer-managed control plane VMs reduces the scope of your own compliance boundary.
