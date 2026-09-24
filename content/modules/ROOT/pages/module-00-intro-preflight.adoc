@@ -25,7 +25,7 @@ By the end of this module you will be able to:
 Before inspecting the cluster, confirm that your terminal has the tooling and access required.
 [source,bash,role=execute]   
 ----
-oc login https://api.rosa-4fgbq.qrdf.p1.openshiftapps.com:6443 --username {openshift_admin_user} --password {openshift_admin_password}
+oc login {openshift_api_url} --username {openshift_admin_user} --password {openshift_admin_password}
 ----
 . Verify Azure CLI authentication:
 +
