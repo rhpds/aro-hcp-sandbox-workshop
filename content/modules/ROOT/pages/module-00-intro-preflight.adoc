@@ -54,7 +54,7 @@ You should see your lab username.
 +
 [source,bash,role=execute]
 ----
-echo {azure_resource_group}
+echo {aro_hcp_cluster_rg}
 ----
 +
 If the variable is empty, set it to the resource group name shown in your lab instructions before continuing.
@@ -67,7 +67,7 @@ Run a full resource listing for your lab resource group:
 
 [source,bash,role=execute]
 ----
-az resource list --resource-group {azure_resource_group} --output table
+az resource list --resource-group {aro_hcp_cluster_rg} --output table
 ----
 
 Scan the `Type` column. You will see entries for dns, storage accounts, public ip address, network security groups, virtual networks, network interfaces etc.
@@ -78,7 +78,7 @@ Filter specifically for Virtual Machine resources:
 
 [source,bash,role=execute]
 ----
-az vm list --resource-group {azure_resource_group} --output table --query "[].{Name:name, Size:hardwareProfile.vmSize}"
+az vm list --resource-group {aro_hcp_cluster_rg} --output table --query "[].{Name:name, Size:hardwareProfile.vmSize}"
 ----
 
 Every VM listed is a worker node. None will have a master, control-plane, or etcd naming pattern — those VMs run in Azure and are invisible to your subscription.
@@ -87,7 +87,7 @@ Every VM listed is a worker node. None will have a master, control-plane, or etc
 
 [source,bash,role=execute]
 ----
-az disk list --resource-group {azure_resource_group} --output table --query "[].{Name:name, SizeGB:diskSizeGb}"
+az disk list --resource-group {aro_hcp_cluster_rg} --output table --query "[].{Name:name, SizeGB:diskSizeGb}"
 ----
 
 All disks belong to worker OS volumes. No etcd data disks are present.
@@ -96,7 +96,7 @@ All disks belong to worker OS volumes. No etcd data disks are present.
 
 [source,bash,role=execute]
 ----
-az network lb list --resource-group {azure_resource_group} --output table
+az network lb list --resource-group {aro_hcp_cluster_rg} --output table
 ----
 
 Any load balancers present are for worker-tier ingress. The API server load balancer lives in Azure, not your subscription.
@@ -123,7 +123,7 @@ ARO HCP uses *OIDC Workload Identity Federation*. The cluster's API server acts 
 
 [source,bash,role=execute]
 ----
-az resource list --resource-group {azure_resource_group} \
+az resource list --resource-group {aro_hcp_cluster_rg} \
   --resource-type Microsoft.ManagedIdentity/userAssignedIdentities \
   --output table
 ----
