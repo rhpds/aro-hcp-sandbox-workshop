@@ -78,7 +78,7 @@ Filter specifically for Virtual Machine resources:
 
 [source,role=execute, subs="attributes"]
 ----
-az vm list --resource-group {aro_hcp_cluster_rg} --output table --query "[].{Name:name, Size:hardwareProfile.vmSize}"
+az vm list --resource-group {aro_hcp_cluster_managed_rg} --output table --query "[].{Name:name, Size:hardwareProfile.vmSize}"
 ----
 
 Every VM listed is a worker node. None will have a master, control-plane, or etcd naming pattern — those VMs run in Azure and are invisible to your subscription.
@@ -87,7 +87,7 @@ Every VM listed is a worker node. None will have a master, control-plane, or etc
 
 [source,role=execute, subs="attributes"]
 ----
-az disk list --resource-group {aro_hcp_cluster_rg} --output table --query "[].{Name:name, SizeGB:diskSizeGb}"
+az disk list --resource-group {aro_hcp_cluster_managed_rg} --output table --query "[].{Name:name, SizeGB:diskSizeGb}"
 ----
 
 All disks belong to worker OS volumes. No etcd data disks are present.
@@ -96,7 +96,7 @@ All disks belong to worker OS volumes. No etcd data disks are present.
 
 [source,role=execute, subs="attributes"]
 ----
-az network lb list --resource-group {aro_hcp_cluster_rg} --output table
+az network lb list --resource-group {aro_hcp_cluster_managed_rg} --output table
 ----
 
 Any load balancers present are for worker-tier ingress. The API server load balancer lives in Azure, not your subscription.
@@ -115,37 +115,41 @@ At enterprise scale, this is a meaningful reduction in patching, monitoring, bac
 
 === How ARO HCP Authenticates to Azure
 
-In traditional ARO, the cluster holds a static Azure service principal credential — a client ID and secret stored in a Kubernetes secret. In ARO HCP, there is no such credential and no user-assigned managed identity in your resource group.
+In traditional ARO, a single Azure service principal credential — a client ID and secret — is shared across cluster operators. Any component that needs to call the Azure API uses the same credential, and that credential must be rotated manually or via automation. In ARO HCP, this model is replaced with per-component managed identities, each scoped to exactly the Azure permissions that one operator requires.
 
-ARO HCP uses *OIDC Workload Identity Federation*. The cluster's API server acts as an OIDC issuer. Cluster components present short-lived Kubernetes service account tokens signed by that issuer; Azure AD validates them against the cluster's OIDC discovery document and issues short-lived, scoped Azure access tokens in return. No password, no certificate, and no secret is stored anywhere in the customer's cluster or subscription.
+=== List the Per-Component Managed Identities
 
-=== Confirm No Identity Resources in Your Resource Group
-
-[source, role="execute", subs="attributes"]
+[source,role=execute,subs="attributes"]
 ----
 az resource list --resource-group {aro_hcp_cluster_rg} \
   --resource-type Microsoft.ManagedIdentity/userAssignedIdentities \
   --output table
 ----
 
-The result is empty. In ARO HCP, this is correct. The absence of a user-assigned managed identity in your resource group is not a misconfiguration — it is evidence that the OIDC model is working. No static Azure credential exists in your subscription for this cluster.
+The output lists one identity per control plane or data plane operator. The naming prefix tells you where each component runs:
 
-=== Locate the OIDC Issuer
+* `cp-*` — *control plane* components (cluster API, cloud controller manager, ingress, CSI drivers, image registry, network config, KMS) running in Red Hat's managed infrastructure
+* `dp-*` — *data plane* components running on the customer's worker nodes
+* `service-managed-identity` — used by the ARO HCP service itself for lifecycle operations
 
-The cluster's OIDC discovery document is served at a standard path on the API server:
+No single shared credential exists. If one identity were compromised, it would have access only to the Azure resources that one operator is permitted to touch — not the entire cluster's infrastructure.
+
+=== Verify the OIDC Issuer from the Cluster
+
+The managed identities are attached to VMs managed by Red Hat — the customer does not manage their bindings or rotation. From the customer's cluster context, the evidence of this trust model is the cluster's OIDC discovery document:
 
 [source,bash,role=execute]
 ----
 oc get --raw '/.well-known/openid-configuration' | jq .
 ----
 
-The `issuer` field in the response is the trust anchor. Azure AD has a federated credential configuration that points to this issuer — when a cluster component presents a service account token, Azure AD validates the signature against the OIDC discovery document at this URL and issues a scoped, short-lived access token. Red Hat provisions and operates this endpoint; the customer neither owns it nor rotates anything backed by it.
+The `issuer` field is the OIDC endpoint that backs service account token exchange for the cluster. Red Hat provisions and operates this endpoint. The customer neither owns it nor rotates the credentials that depend on it.
 
 == Summary
 
 === What You Learned
 
-* An ARO HCP cluster's Azure resource group contains **only worker-tier resources** — VMs, their OS disks, network interfaces, and the Managed Identity. Master VMs, etcd disks, and the API server load balancer are absent from the customer subscription because they run in Azure.
+* An ARO HCP cluster's primary resource group contains **per-component managed identities** — one scoped identity per operator, not a single shared credential. Master VMs, etcd disks, and the API server load balancer are absent from the customer subscription because they run in Azure.
 * The managed control plane model **scales the operational simplification linearly**: every additional cluster eliminates three master VMs from customer scope.
 * **OIDC Workload Identity Federation** replaces static Azure service principal credentials with short-lived token exchanges backed by the cluster's OIDC issuer — satisfying zero-static-credential requirements without any customer-side secret management.
 
@@ -155,6 +159,6 @@ The `issuer` field in the response is the trust anchor. Azure AD has a federated
 
 * *"What happens if a control plane component fails?"* — Red Hat's SRE responds under the ARO SLA. The customer is not paged and does not need a runbook for etcd recovery.
 
-* *"How does this affect our compliance posture?"* — OIDC Workload Identity eliminates the service principal credential rotation finding that appears in nearly every Azure security baseline audit. Short-lived, scoped token exchange with no secret stored in the cluster satisfies zero-static-credential requirements out of the box.
+* *"How does this affect our compliance posture?"* — Per-component managed identities eliminate the single shared service principal credential rotation finding that appears in nearly every Azure security baseline audit. Each operator's blast radius is limited to its own scope — a compromised identity cannot pivot to the full cluster infrastructure.
 
 * *"Is this suitable for regulated workloads?"* — ARO HCP is FedRAMP-authorized for GovCloud regions and satisfies common FSI controls around credential management and infrastructure access. The absence of customer-managed control plane VMs reduces the scope of your own compliance boundary.
