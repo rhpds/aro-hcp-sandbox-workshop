@@ -121,7 +121,7 @@ ARO HCP uses *OIDC Workload Identity Federation*. The cluster's API server acts 
 
 === Confirm No Identity Resources in Your Resource Group
 
-[source,bash,role=execute]
+[source, role="execute", subs="attributes"]
 ----
 az resource list --resource-group {aro_hcp_cluster_rg} \
   --resource-type Microsoft.ManagedIdentity/userAssignedIdentities \
