@@ -70,7 +70,7 @@ Run a full resource listing for your lab resource group:
 az resource list --resource-group {aro_hcp_cluster_rg} --output table
 ----
 
-Scan the `Type` column. You will see entries for network security groups, virtual networks, managed identities, HCPOpenShiftClusters & Nodepools.
+Scan the `Type` column. You will see entries for network security groups, virtual networks, vaults, managed identities, HCPOpenShiftClusters & Nodepools.
 
 === Confirm No Master VMs
 
