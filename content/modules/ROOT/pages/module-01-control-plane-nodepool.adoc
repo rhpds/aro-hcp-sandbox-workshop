@@ -147,7 +147,7 @@ az aro hcp cluster nodepool update \
   --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name $NODEPOOL_NAME \
-  --node-count $((CURRENT_COUNT + 1))
+  --replicas $((CURRENT_COUNT + 1))
 ----
 
 === Cross-Reference in Azure
@@ -188,7 +188,7 @@ az aro hcp cluster nodepool update \
   --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name $NODEPOOL_NAME \
-  --node-count $CURRENT_COUNT
+  --replicas $CURRENT_COUNT
 ----
 
 . Confirm the cluster returns to baseline:
