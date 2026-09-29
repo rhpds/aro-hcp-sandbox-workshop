@@ -62,7 +62,14 @@ The NodePool is the customer's primary handle on the cluster. VM count, VM SKU, 
 
 === Capture the Cluster Name
 
-. Retrieve your cluster name from the Azure CLI:
+. List the ARO HCP cluster in your resource group:
++
+[source,role=execute,subs="attributes"]
+----
+az aro hcp cluster list --resource-group {aro_hcp_cluster_rg} --output table
+----
+
+. Capture the cluster name for use in subsequent commands:
 +
 [source,role=execute,subs="attributes"]
 ----
