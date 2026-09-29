@@ -67,7 +67,7 @@ The most counterintuitive aspect of ARO HCP: cluster operators report `Available
 oc get clusteroperator
 ----
 
-Scan the `AVAILABLE`, `PROGRESSING`, and `DEGRADED` columns. Control plane operators report healthy — but the pods implementing them are invisible from the customer's context. The operator objects exist in the customer's cluster as status reporters, not as pod controllers.
+Scan the `AVAILABLE`, `PROGRESSING`, and `DEGRADED` columns. Operators like `kube-apiserver` and `kube-controller-manager` report healthy — these are control plane operators whose pods run in Red Hat's managed infrastructure. The operator objects that do appear exist as status reporters, not as pod controllers.
 
 This is the definitive proof of the ARO HCP model: a fully functioning, healthy control plane with zero customer-managed pods.
 
