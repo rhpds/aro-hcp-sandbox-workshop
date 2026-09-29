@@ -121,7 +121,7 @@ CURRENT_COUNT=$(az aro hcp cluster nodepool show \
   --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name $NODEPOOL_NAME \
-  --query "replicas" --output tsv)
+  --query "properties.replicas" --output tsv)
 echo "Current node count: $CURRENT_COUNT"
 ----
 
