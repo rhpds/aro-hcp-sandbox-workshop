@@ -60,7 +60,7 @@ This is the key evidence: the API server is responding — every `oc` command yo
 
 The NodePool is the customer's primary handle on the cluster. VM count, VM SKU, OpenShift version, and update strategy are all managed at this layer. In ARO HCP, NodePool operations go through the Azure CLI — the `az aro hcp` subcommand group surfaces the same configuration the HyperShift operator manages internally.
 
-=== Capture the Cluster Name
+=== List the Cluster and NodePools
 
 . List the ARO HCP cluster in your resource group:
 +
@@ -69,34 +69,19 @@ The NodePool is the customer's primary handle on the cluster. VM count, VM SKU, 
 az aro hcp cluster list --resource-group {aro_hcp_cluster_rg} --output table
 ----
 
-. Capture the cluster name for use in subsequent commands:
+. List the NodePools for your cluster:
 +
 [source,role=execute,subs="attributes"]
 ----
-CLUSTER_NAME=$(az aro hcp cluster list \
-  --resource-group {aro_hcp_cluster_rg} \
-  --query "[0].name" --output tsv)
-echo "Cluster: $CLUSTER_NAME"
-----
-
-=== List and Inspect the NodePool
-
-. List all NodePools for your cluster:
-+
-[source,role=execute,subs="attributes"]
-----
-az aro hcp nodepool list \
-  --cluster-name $CLUSTER_NAME \
-  --resource-group {aro_hcp_cluster_rg} \
-  --output table
+az aro hcp cluster nodepool list --cluster-name {aro_hcp_cluster_name} --resource-group {aro_hcp_cluster_rg} --output table
 ----
 
 . Capture the default NodePool name and inspect it:
 +
 [source,role=execute,subs="attributes"]
 ----
-NODEPOOL_NAME=$(az aro hcp nodepool list \
-  --cluster-name $CLUSTER_NAME \
+NODEPOOL_NAME=$(az aro hcp cluster nodepool list \
+  --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --query "[0].name" --output tsv)
 echo "NodePool: $NODEPOOL_NAME"
@@ -104,8 +89,8 @@ echo "NodePool: $NODEPOOL_NAME"
 +
 [source,role=execute,subs="attributes"]
 ----
-az aro hcp nodepool show \
-  --cluster-name $CLUSTER_NAME \
+az aro hcp cluster nodepool show \
+  --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name $NODEPOOL_NAME
 ----
@@ -132,8 +117,8 @@ This section demonstrates the operational model in action: one Azure CLI call dr
 +
 [source,role=execute,subs="attributes"]
 ----
-CURRENT_COUNT=$(az aro hcp nodepool show \
-  --cluster-name $CLUSTER_NAME \
+CURRENT_COUNT=$(az aro hcp cluster nodepool show \
+  --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name $NODEPOOL_NAME \
   --query "nodeCount" --output tsv)
@@ -158,8 +143,8 @@ Note the number of VMs. After scaling, one additional VM will appear here.
 +
 [source,role=execute,subs="attributes"]
 ----
-az aro hcp nodepool update \
-  --cluster-name $CLUSTER_NAME \
+az aro hcp cluster nodepool update \
+  --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name $NODEPOOL_NAME \
   --node-count $((CURRENT_COUNT + 1))
@@ -199,8 +184,8 @@ Wait for the new node to appear in `Ready` status, then press `Ctrl+C`.
 +
 [source,role=execute,subs="attributes"]
 ----
-az aro hcp nodepool update \
-  --cluster-name $CLUSTER_NAME \
+az aro hcp cluster nodepool update \
+  --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name $NODEPOOL_NAME \
   --node-count $CURRENT_COUNT
