@@ -97,7 +97,7 @@ az aro hcp cluster nodepool show \
 +
 Review these fields in the output:
 +
-* Node count — the desired worker replica count. Changing this is how you scale the cluster.
+* `replicas` — the desired worker node count. Changing this is how you scale the cluster.
 * VM size — the Azure VM SKU for workers. The customer controls this; Red Hat does not choose it.
 * OpenShift version — the version for this NodePool. Workers can be at a different version than the control plane during a rolling upgrade.
 * Provisioning state — NodePool-level health. A non-Succeeded state is in customer scope to investigate.
@@ -121,7 +121,7 @@ CURRENT_COUNT=$(az aro hcp cluster nodepool show \
   --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name $NODEPOOL_NAME \
-  --query "nodeCount" --output tsv)
+  --query "replicas" --output tsv)
 echo "Current node count: $CURRENT_COUNT"
 ----
 
