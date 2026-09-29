@@ -56,6 +56,19 @@ oc get pods -n openshift-kube-apiserver
 +
 This is the key evidence: the API server is responding — every `oc` command you have run proves it — but its implementation is outside the customer's view. The control plane exists; you simply do not own it.
 
+=== Verify Operators Report Healthy Without Visible Pods
+
+The most counterintuitive aspect of ARO HCP: cluster operators report `Available=True` and `Degraded=False` — but the pods implementing them are invisible from the customer's context.
+
+[source,bash,role=execute]
+----
+oc get clusteroperator
+----
+
+Scan the `AVAILABLE`, `PROGRESSING`, and `DEGRADED` columns. Operators like `kube-apiserver`, `etcd`, and `kube-controller-manager` all report healthy. These are control plane operators — their pods run in Red Hat's managed infrastructure. The operator objects exist in the customer's cluster as status reporters, not as pod controllers.
+
+This is the definitive proof of the ARO HCP model: a fully functioning, healthy control plane with zero customer-managed pods.
+
 == Section 2 — NodePool: Inspect Your Operational Surface
 
 The NodePool is the customer's primary handle on the cluster. VM count, VM SKU, OpenShift version, and update strategy are all managed at this layer. In ARO HCP, NodePool operations go through the Azure CLI — the `az aro hcp` subcommand group surfaces the same configuration the HyperShift operator manages internally.
@@ -150,6 +163,31 @@ az aro hcp cluster nodepool update \
   --replicas $((CURRENT_COUNT + 1))
 ----
 
+=== Inspect Node Labels While Provisioning
+
+New VM provisioning typically takes 5–10 minutes. Use that time to examine how Azure VM metadata surfaces as Kubernetes node labels on an existing worker — the OCP-layer evidence of the Azure infrastructure you inspected in Module 0.
+
+. Capture an existing worker node name:
++
+[source,bash,role=execute]
+----
+WORKER_NODE=$(oc get nodes -o jsonpath='{.items[0].metadata.name}')
+echo $WORKER_NODE
+----
+
+. Inspect the Azure-specific node labels:
++
+[source,bash,role=execute]
+----
+oc describe node $WORKER_NODE | grep -E 'topology|instance-type|node\.kubernetes\.io'
+----
++
+Note these labels, set automatically by the cloud controller manager when the node registered:
++
+* `node.kubernetes.io/instance-type` — the Azure VM SKU, matching what you saw in the NodePool spec
+* `topology.kubernetes.io/zone` — the Azure Availability Zone the VM was placed in
+* `topology.kubernetes.io/region` — the Azure region
+
 === Cross-Reference in Azure
 
 . While the NodePool is scaling, query the managed resource group for new VMs:
@@ -178,6 +216,17 @@ oc get nodes -w
 +
 Wait for the new node to appear in `Ready` status, then press `Ctrl+C`.
 
+. Compare the new node's labels with the existing worker:
++
+[source,bash,role=execute]
+----
+NEW_NODE=$(oc get nodes --sort-by=.metadata.creationTimestamp \
+  -o jsonpath='{.items[-1].metadata.name}')
+oc describe node $NEW_NODE | grep -E 'topology|instance-type|node\.kubernetes\.io'
+----
++
+The new node carries the same `instance-type` as the existing workers — matching the NodePool VM SKU — and is placed in an Azure Availability Zone that may differ from existing nodes depending on ARO HCP's zone-spreading policy.
+
 === Restore the Baseline
 
 . Scale the NodePool back to the original node count:
@@ -204,7 +253,7 @@ The additional VM will be deprovisioned and removed from the managed resource gr
 
 === What You Learned
 
-* **The control plane is invisible from the customer's context.** `oc get nodes` lists only worker nodes. The etcd and API server namespaces contain no running pods. The API server is responding — but its implementation runs in Red Hat's managed infrastructure, outside the customer's subscription.
+* **The control plane is invisible from the customer's context.** `oc get nodes` lists only worker nodes. The etcd and API server namespaces contain no running pods. Cluster operators report `Available=True` with no visible pods — the definitive proof of the ARO HCP model. The API server is responding, but its implementation runs in Red Hat's managed infrastructure.
 * **The NodePool is the customer's operational surface.** Every worker scaling action, VM SKU selection, and NodePool version update goes through the NodePool resource. Everything above it — the hosted control plane — is Red Hat's responsibility.
 * **One Azure CLI call drives VM provisioning.** Updating the node count on the NodePool was the only action required. The ARO HCP service handled every Azure API call transparently — VM creation, NIC allocation, disk provisioning.
 
@@ -212,7 +261,7 @@ The additional VM will be deprovisioned and removed from the managed resource gr
 
 *"How do I scale my cluster?"*
 
-Update the node count on the NodePool using `az aro hcp nodepool update`. That is the entire action. No Azure portal, no `az vm create`, no capacity reservation to manage separately. The ARO HCP service translates the declarative intent into every required Azure API call.
+Update the node count on the NodePool using `az aro hcp cluster nodepool update --replicas N`. That is the entire action. No Azure portal, no `az vm create`, no capacity reservation to manage separately. The ARO HCP service translates the declarative intent into every required Azure API call.
 
 *"What if I need a different VM size for my workers?"*
 
@@ -220,7 +269,7 @@ Update the VM size on the NodePool. ARO HCP will provision new nodes with the ne
 
 *"How do I know when my NodePool is unhealthy?"*
 
-Check the NodePool's provisioning state and conditions via `az aro hcp nodepool show`. A non-Succeeded provisioning state is in customer scope to investigate — typically a VM quota issue, a subnet routing problem, or a failing bootstrap. Control plane health, by contrast, is Red Hat's responsibility.
+Check the NodePool's provisioning state and conditions via `az aro hcp cluster nodepool show`. A non-Succeeded provisioning state is in customer scope to investigate — typically a VM quota issue, a subnet routing problem, or a failing bootstrap. Control plane health, by contrast, is Red Hat's responsibility.
 
 *"Why can't I see the master nodes?"*
 
