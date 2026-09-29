@@ -2,13 +2,15 @@
 
 == Value Proposition
 
-ARO HCP (Azure Red Hat OpenShift with Hosted Control Planes) eliminates the master node tier from a customer's Azure subscription entirely. Red Hat owns, operates, and secures the control plane — etcd, the API server, the scheduler, and the controller manager — in Azure. The customer's operational surface begins at the worker node.
+ARO HCP (Azure Red Hat OpenShift with Hosted Control Planes) eliminates the master node tier from a customer's Azure subscription entirely. Red Hat owns, operates, and secures the control plane — etcd, the API server, the scheduler, and the controller manager — in a Red Hat-managed Azure service account. The customer's operational surface begins at the worker node.
+
+A 2026 Red Hat internal study found ARO HCP delivers *up to 4x cost reduction on average* and *up to 55% faster cluster provisioning* compared to standard ARO. The minimum cluster footprint drops from 6 nodes (3 masters + 3 workers in standard ARO) to 2 worker nodes — with no master infrastructure in the customer's subscription at all.
 
 image::aro-hcp-architecture.png[ARO HCP architecture diagram showing control plane in Microsoft Subscription and worker NodePools in Customer Subscription,800]
 
 The diagram above captures the architectural split. The *Microsoft Subscription* on the left holds the entire control plane — api-server, oauth, Ignition, router, and supporting components — operated by Red Hat and connected to the customer's infrastructure through a network interface. The *Customer Subscription* on the right contains only the data plane: worker nodes organised into NodePools, each independently scalable and configurable with its own VM SKU — general-purpose compute, memory-optimised, or GPU nodes. The boundary between the two subscriptions is exactly what the hands-on steps in this module verify: every resource on the left side of this diagram is absent from your Azure resource group.
 
-For regulated industries — financial services, government, healthcare — this matters for two reasons. First, it removes a complex attack surface that most enterprise teams are not resourced to harden properly. Second, it replaces static Azure service principal credentials with Managed Identity and Workload Identity bindings, eliminating an entire class of credential-related compliance findings before a customer writes a single line of policy.
+For regulated industries — financial services, government, healthcare — this matters for three reasons. First, it removes a complex attack surface that most enterprise teams are not resourced to harden properly. Second, standard ARO requires Service Principals alongside Managed Identity and Workload Identity — ARO HCP eliminates Service Principals entirely, replacing them with managed identities and workload identities only, removing an entire class of credential-related compliance findings. Third, ARO HCP adds enterprise security controls including Bring Your Own Keys (BYOK) for key management, etcd encryption at rest, and Hardware Security Module (HSM) support — all without customer-managed control plane infrastructure.
 
 This lab proves both claims through live inspection: you will query the actual Azure resource group and confirm the absence of master infrastructure, then trace the identity bindings that replace it.
 
@@ -103,19 +105,21 @@ Any load balancers present are for worker-tier ingress. The API server load bala
 
 == Operational Impact Calculation
 
-The managed control plane model has a concrete cost and staffing implication. A standard self-managed OpenShift cluster requires three master VMs. With ARO HCP:
+The managed control plane model has a concrete cost and staffing implication. Standard ARO requires a minimum of 6 nodes (3 masters + 3 workers). ARO HCP requires a minimum of 2 worker nodes — the control plane runs in Red Hat's managed Azure service account and contributes zero nodes to the customer's footprint.
+
+At multi-cluster scale, the elimination of master VMs compounds quickly:
 
 * 5 clusters → 15 master VMs eliminated from customer-managed infrastructure
 * 15 clusters → 45 master VMs eliminated
 * 50 clusters → 150 master VMs eliminated
 
-At enterprise scale, this is a meaningful reduction in patching, monitoring, backup, and incident-response scope — and every one of those VMs was a potential pivot point for an attacker who compromised a node credential.
+A 2026 Red Hat internal study quantifies the impact: *up to 4x cost reduction on average* and *up to 55% faster cluster provisioning*. At enterprise scale, this is a meaningful reduction in patching, monitoring, backup, and incident-response scope — and every eliminated master VM was a potential pivot point for an attacker who compromised a node credential.
 
 == Examine Identity Bindings
 
 === How ARO HCP Authenticates to Azure
 
-In traditional ARO, a single Azure service principal credential — a client ID and secret — is shared across cluster operators. Any component that needs to call the Azure API uses the same credential, and that credential must be rotated manually or via automation. In ARO HCP, this model is replaced with per-component managed identities, each scoped to exactly the Azure permissions that one operator requires.
+Standard ARO authenticates to Azure using a combination of Service Principals, Managed Identities, and Workload Identities. Service Principals — static client ID and secret credentials — must be rotated manually or via automation and represent a persistent compliance finding in most Azure security baseline audits. ARO HCP eliminates Service Principals entirely. Authentication uses Managed Identities and Workload Identities only: per-component managed identities, each scoped to exactly the Azure permissions that one operator requires, with no static secret stored anywhere.
 
 === List the Per-Component Managed Identities
 
