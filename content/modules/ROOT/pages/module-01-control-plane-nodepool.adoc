@@ -67,7 +67,7 @@ The most counterintuitive aspect of ARO HCP: cluster operators report `Available
 oc get clusteroperator
 ----
 
-Scan the `AVAILABLE`, `PROGRESSING`, and `DEGRADED` columns. Operators like `kube-apiserver` and `kube-controller-manager` report healthy — these are control plane operators whose pods run in Red Hat's managed infrastructure. The `etcd` operator is not listed at all: in ARO HCP, etcd is entirely internal to HyperShift on the management cluster and has no cluster operator object in the customer's context. The operator objects that do appear exist as status reporters, not as pod controllers.
+Scan the `AVAILABLE`, `PROGRESSING`, and `DEGRADED` columns. Control plane operators report healthy — but the pods implementing them are invisible from the customer's context. The operator objects exist in the customer's cluster as status reporters, not as pod controllers.
 
 This is the definitive proof of the ARO HCP model: a fully functioning, healthy control plane with zero customer-managed pods.
 
@@ -255,7 +255,7 @@ The additional VM will be deprovisioned and removed from the managed resource gr
 
 === What You Learned
 
-* **The control plane is invisible from the customer's context.** `oc get nodes` lists only worker nodes. The etcd and API server namespaces contain no running pods. Control plane operators like `kube-apiserver` and `kube-controller-manager` report `Available=True` with no visible pods, and the `etcd` operator does not appear at all — it is entirely internal to HyperShift. The API server is responding, but its implementation runs in Red Hat's managed infrastructure.
+* **The control plane is invisible from the customer's context.** `oc get nodes` lists only worker nodes. Control plane namespaces contain no running pods. Cluster operators report `Available=True` with no visible pods. The API server is responding, but its implementation runs in Red Hat's managed infrastructure.
 * **The NodePool is the customer's operational surface.** Every worker scaling action, VM SKU selection, and NodePool version update goes through the NodePool resource. Everything above it — the hosted control plane — is Red Hat's responsibility.
 * **One Azure CLI call drives VM provisioning.** Updating the node count on the NodePool was the only action required. The ARO HCP service handled every Azure API call transparently — VM creation, NIC allocation, disk provisioning.
 
