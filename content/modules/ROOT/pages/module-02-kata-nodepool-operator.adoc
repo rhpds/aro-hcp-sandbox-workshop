@@ -1,0 +1,293 @@
+= A Second NodePool: Kata Containers on ARO HCP
+
+== Value Proposition
+
+Standard OpenShift workloads run inside containers that share the host kernel. For most enterprise workloads this is acceptable. For regulated, multi-tenant, or high-risk workloads — processing untrusted code, running third-party payloads, handling data with strict isolation requirements — kernel sharing is an unacceptable risk surface.
+
+OpenShift Sandboxed Containers addresses this by running each pod inside a lightweight KVM virtual machine managed by Kata Containers. The pod API is unchanged — no application manifest modifications are required — but the isolation boundary shifts from namespace and cgroup to a hardware-enforced VM boundary. A compromised container cannot escape to the host kernel; it can only reach the Kata guest kernel.
+
+In ARO HCP, this capability requires a dedicated NodePool targeting a VM SKU that supports nested virtualization — the ability to run KVM inside an Azure VM. The Standard_D4s_v5 SKU is the minimum size that meets this requirement. Kata nodes are kept separate from standard workloads via a NoSchedule taint, ensuring runc containers never land on the more expensive Kata nodes unintentionally.
+
+This module provisions that NodePool, installs the Sandboxed Containers Operator, and examines the three resources the operator manages. Module 3 completes the configuration by deploying KataConfig and running the first sandboxed workload.
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Create a dedicated Kata NodePool targeting a nested-virtualization-capable VM SKU using the Azure CLI
+* Apply node labels and taints that bind the NodePool to KataConfig in Module 3
+* Verify KVM availability on Kata nodes from the hosted cluster context
+* Deploy the Sandboxed Containers Operator via an OLM Subscription
+* Identify the three resources managed by the Sandboxed Containers Operator and explain each one's role
+* Evaluate `installPlanApproval` settings for production operator lifecycle management
+
+== Section 1 — Create the Kata NodePool
+
+=== Why a Dedicated NodePool
+
+Kata Containers require KVM — a hardware-enforced hypervisor that runs each pod in its own VM. Two constraints follow:
+
+* **VM SKU**: Not all Azure VM SKUs support nested virtualization. The Standard_D4s_v5 SKU is the minimum size that does.
+* **Node isolation**: Each Kata pod carries per-VM overhead. Running standard runc workloads on Kata nodes wastes that overhead. A NoSchedule taint enforces the boundary.
+
+A node label ties this NodePool to KataConfig in Module 3. KataConfig uses a `kataConfigPoolSelector` to identify which nodes should receive Kata binaries. If the label on this NodePool does not exactly match that selector, KataConfig will proceed silently with zero nodes configured — the most common Sandboxed Containers deployment error.
+
+=== Create the NodePool
+
+. Create the Kata-dedicated NodePool with the Standard_D4s_v5 VM SKU:
++
+[source,role=execute,subs="attributes"]
+----
+az aro hcp cluster nodepool create \
+  --cluster-name {aro_hcp_cluster_name} \
+  --resource-group {aro_hcp_cluster_rg} \
+  --name kata-nodepool \
+  --vm-size Standard_D4s_v5 \
+  --replicas 2
+----
+
+. Track provisioning state until `Succeeded`:
++
+[source,role=execute,subs="attributes"]
+----
+az aro hcp cluster nodepool show \
+  --cluster-name {aro_hcp_cluster_name} \
+  --resource-group {aro_hcp_cluster_rg} \
+  --name kata-nodepool \
+  --query "{State:properties.provisioningState, Replicas:properties.replicas}" \
+  --output table
+----
++
+Repeat every 30–60 seconds. Provisioning typically takes 5–10 minutes.
+
+. While waiting, observe the new VMs appear in the managed resource group:
++
+[source,role=execute,subs="attributes"]
+----
+az vm list \
+  --resource-group {aro_hcp_cluster_managed_rg} \
+  --output table \
+  --query "[].{Name:name, Size:hardwareProfile.vmSize, State:provisioningState}"
+----
++
+You will see two new `Standard_D4s_v5` VMs alongside the existing `Standard_D4s_v6` worker nodes. The Kata NodePool uses a different VM SKU family — note this in the `Size` column.
+
+=== Label and Taint the Kata Nodes
+
+Once the nodes are `Ready`, apply the label and taint that Module 3 depends on.
+
+. Confirm the Kata nodes have joined the cluster:
++
+[source,bash,role=execute]
+----
+oc get nodes
+----
++
+Identify the two new nodes from the Kata NodePool — they will have a more recent creation timestamp.
+
+. Apply the Kata node label:
++
+[source,bash,role=execute]
+----
+oc label nodes -l kubernetes.azure.com/agentpool=kata-nodepool \
+  node-role.kubernetes.io/kata=
+----
+
+[NOTE]
+====
+The label `node-role.kubernetes.io/kata=` must match the `kataConfigPoolSelector` in the KataConfig resource you will create in Module 3. An exact match is required. Verify the label is applied correctly before proceeding.
+====
+
+. Apply the NoSchedule taint to prevent runc workloads from scheduling on Kata nodes:
++
+[source,bash,role=execute]
+----
+oc adm taint nodes -l node-role.kubernetes.io/kata= kata=true:NoSchedule
+----
+
+. Confirm both label and taint are applied:
++
+[source,bash,role=execute]
+----
+oc get nodes -l node-role.kubernetes.io/kata= \
+  -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+----
++
+Each Kata node should show the `kata=true:NoSchedule` taint.
+
+=== Verify KVM Availability
+
+KVM must be present on each Kata node for the Kata runtime to function. Confirm this before proceeding to the operator installation.
+
+. Capture a Kata node name:
++
+[source,bash,role=execute]
+----
+KATA_NODE=$(oc get nodes -l node-role.kubernetes.io/kata= \
+  -o jsonpath='{.items[0].metadata.name}')
+echo $KATA_NODE
+----
+
+. Open a debug shell on the Kata node:
++
+[source,bash,role=execute]
+----
+oc debug node/$KATA_NODE
+----
+
+. Inside the debug shell, verify the KVM device is present:
++
+[source,bash,role=execute]
+----
+ls -la /host/dev/kvm
+----
++
+Expected output: a character device at `/host/dev/kvm`. If this path is absent, nested virtualization is not enabled on this VM SKU in this Azure region — Kata will not function and a different SKU or region is required.
+
+. Exit the debug shell:
++
+[source,bash,role=execute]
+----
+exit
+----
+
+== Section 2 — Install the Sandboxed Containers Operator
+
+The Sandboxed Containers Operator manages the lifecycle of Kata binaries and runtime configuration on the cluster. It is installed from the Red Hat operator catalog via a standard OLM Subscription.
+
+=== Apply the Operator Subscription
+
+The installation requires three resources in sequence: a Namespace, an OperatorGroup, and a Subscription.
+
+. Apply all three resources in one step:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-sandboxed-containers-operator
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-sandboxed-containers-operator
+  namespace: openshift-sandboxed-containers-operator
+spec:
+  targetNamespaces:
+  - openshift-sandboxed-containers-operator
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: sandboxed-containers-operator
+  namespace: openshift-sandboxed-containers-operator
+spec:
+  channel: stable
+  installPlanApproval: Automatic
+  name: sandboxed-containers-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+EOF
+----
+
+=== Watch the CSV Reach Succeeded
+
+. Watch the ClusterServiceVersion (CSV) status:
++
+[source,bash,role=execute]
+----
+oc get csv -n openshift-sandboxed-containers-operator -w
+----
++
+Wait for the `PHASE` column to show `Succeeded`. This typically takes 2–3 minutes as OLM downloads the operator bundle and starts the manager pod. Press `Ctrl+C` once it reaches `Succeeded`.
+
+. Confirm the operator pod is running:
++
+[source,bash,role=execute]
+----
+oc get pods -n openshift-sandboxed-containers-operator
+----
++
+The operator manager pod should be in `Running` state.
+
+== Section 3 — Operator Resources and Production Considerations
+
+=== The Three Resources the Operator Manages
+
+The Sandboxed Containers Operator installs three CRDs. Examine them:
+
+[source,bash,role=execute]
+----
+oc get crd | grep -E 'kata|peerpod'
+----
+
+Each CRD represents a distinct capability:
+
+* **`kataconfigs.kataconfiguration.openshift.io`** — triggers installation of Kata binaries onto labeled nodes via MachineConfig. When you create a KataConfig resource in Module 3, the operator generates a MachineConfig that rolls onto every node matching the `kataConfigPoolSelector`. Once the MachineConfig is applied, the Kata runtime is installed and the containerd configuration is updated on each matching node.
+
+* **`RuntimeClass`** (created by the operator, not a CRD) — registers the `kata` handler with containerd. After KataConfig completes, a RuntimeClass named `kata` appears in the cluster. Pods that set `runtimeClassName: kata` in their spec use the Kata VM runtime instead of runc. No other change to the pod spec is required.
+
+* **`peerpodsconfigs.confidentialcontainers.org`** — configures PeerPod mode. In PeerPod mode, each pod runs in a separate cloud provider VM rather than a nested VM on the worker node. This enables Kata-style isolation on VM SKUs that do not support nested virtualization, at the cost of longer pod start times. PeerPod mode is not covered in this lab.
+
+=== Examine the Installed CSV
+
+. Confirm what CRDs the operator owns:
++
+[source,bash,role=execute]
+----
+oc get csv -n openshift-sandboxed-containers-operator \
+  -o jsonpath='{.items[0].spec.customresourcedefinitions.owned[*].name}' \
+  | tr ' ' '\n'
+----
++
+This lists every CRD the operator is responsible for managing — these are the resources you can create to drive operator behaviour.
+
+=== Production Consideration: installPlanApproval
+
+. Check the Subscription's `installPlanApproval` setting:
++
+[source,bash,role=execute]
+----
+oc get subscription sandboxed-containers-operator \
+  -n openshift-sandboxed-containers-operator \
+  -o jsonpath='{.spec.installPlanApproval}'
+----
++
+This returns `Automatic`. With `Automatic` approval, OLM upgrades the operator whenever a new version appears in the `stable` channel without any human gate.
+
+For production environments that require change-controlled upgrades:
+
+* Set `installPlanApproval: Manual` in the Subscription
+* Review pending upgrades: `oc get installplan -n openshift-sandboxed-containers-operator`
+* Approve a specific plan: `oc patch installplan <name> -n openshift-sandboxed-containers-operator --type merge -p '{"spec":{"approved":true}}'`
+
+`Automatic` is appropriate for lab and development environments. For production, align the approval mode with your change management process.
+
+== Summary
+
+=== What You Learned
+
+* **A dedicated NodePool is required for Kata workloads.** The Standard_D4s_v5 SKU supports nested virtualization (KVM). The node label must exactly match the `kataConfigPoolSelector` in KataConfig — a mismatch causes silent, partial installation. The NoSchedule taint prevents runc workloads from incurring Kata overhead.
+* **KVM availability is verifiable before KataConfig runs.** `oc debug node/` and `ls /host/dev/kvm` confirms the hypervisor device is present — the necessary condition for Kata to function.
+* **The Sandboxed Containers Operator manages three resources.** KataConfig installs Kata binaries via MachineConfig. RuntimeClass registers the kata handler with containerd. PeerPodConfig enables Kata-style isolation on SKUs without nested virtualization.
+* **Operator upgrade policy is a production decision.** `Automatic` installPlanApproval is convenient; `Manual` is appropriate for environments where operator upgrades require change management approval.
+
+=== Key Takeaways for Customer Conversations
+
+*"Why do I need a separate NodePool for Kata?"*
+
+Two reasons: VM SKU and isolation. Kata requires KVM, which is only available on certain Azure VM SKUs. And each Kata pod carries per-VM overhead that runc workloads should not pay for. A dedicated NodePool with a NoSchedule taint enforces this separation without application changes.
+
+*"What if my VM SKU doesn't support nested virtualization?"*
+
+Use PeerPod mode. Instead of a nested VM on the worker node, each pod runs in a separate Azure VM. The isolation boundary is still hardware-enforced, but the Kata guest runs in Azure rather than on the worker. This works on any SKU at the cost of longer pod start times.
+
+*"What happens if the node label doesn't match the KataConfig selector?"*
+
+KataConfig reports success but installs Kata binaries on zero nodes. Verify the match before applying KataConfig: `oc get nodes -l node-role.kubernetes.io/kata=` should list your Kata NodePool workers. If it returns nothing, the label was not applied or does not match the selector.
+
+*"Is the Sandboxed Containers Operator supported on ARO HCP?"*
+
+Yes. The operator runs on worker nodes — entirely within the customer's data plane. The Kata runtime and KVM are worker-node concerns. The hosted control plane has no involvement in Kata pod scheduling or VM management.
