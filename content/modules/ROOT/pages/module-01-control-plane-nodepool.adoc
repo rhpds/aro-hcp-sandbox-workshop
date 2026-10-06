@@ -170,6 +170,7 @@ az aro hcp cluster nodepool update \
 === Inspect Node Labels While Provisioning
 
 New VM provisioning typically takes 5–10 minutes. Use that time to examine how Azure VM metadata surfaces as Kubernetes node labels on an existing worker — the OCP-layer evidence of the Azure infrastructure you inspected in Module 0.
+Run these commands in terminal-2 tab.
 
 . Capture an existing worker node name:
 +
