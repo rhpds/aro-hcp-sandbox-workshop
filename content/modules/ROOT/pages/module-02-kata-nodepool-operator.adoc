@@ -40,7 +40,7 @@ A node label ties this NodePool to KataConfig in Module 3. KataConfig uses a `ka
 ----
 az aro hcp cluster nodepool create \
   --cluster-name {aro_hcp_cluster_name} \
-  --resource-group {aro_hcp_cluster_managed_rg} \
+  --resource-group {aro_hcp_cluster_rg} \
   --name kata-nodepool \
   --vm-size Standard_D4s_v6 \
   --replicas 2
@@ -52,7 +52,7 @@ az aro hcp cluster nodepool create \
 ----
 az aro hcp cluster nodepool show \
   --cluster-name {aro_hcp_cluster_name} \
-  --resource-group {aro_hcp_cluster_managed_rg} \
+  --resource-group {aro_hcp_cluster_rg} \
   --name kata-nodepool \
   --query "{State:properties.provisioningState, Replicas:properties.replicas}" \
   --output table
