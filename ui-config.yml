@@ -9,6 +9,10 @@ view_switcher:
   default_mode: split
 
 tabs:
-  - name: ">_ terminal"
+  - name: ">_ terminal-1"
     path: /wetty
     port: 443
+  - name: ">_ terminal-2"
+    path: /wetty
+    port: 443
+  
