@@ -189,9 +189,11 @@ oc describe node $WORKER_NODE | grep -E 'topology|instance-type|node\.kubernetes
 +
 Note these labels, set automatically by the cloud controller manager when the node registered:
 +
-* `node.kubernetes.io/instance-type` — the Azure VM SKU, matching what you saw in the NodePool spec
-* `topology.kubernetes.io/zone` — the Azure Availability Zone the VM was placed in
-* `topology.kubernetes.io/region` — the Azure region
+* `node.kubernetes.io/instance-type` — the Azure VM SKU, matching `properties.platform.vmSize` in the NodePool spec. You will also see the legacy alias `beta.kubernetes.io/instance-type` with the same value.
+* `topology.kubernetes.io/region` — the Azure region (e.g. `eastus2`)
+* `topology.kubernetes.io/zone` — the Azure Availability Zone as a number (`0`, `1`, or `2`), not a named zone
+* `topology.disk.csi.azure.com/zone` — the zone used by the Azure CSI disk driver for persistent volume placement
+* `k8s.ovn.org/layer2-topology-version` — OVN-Kubernetes networking label; not related to Azure placement
 
 === Cross-Reference in Azure
 
