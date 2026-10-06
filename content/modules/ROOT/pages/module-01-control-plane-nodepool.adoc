@@ -112,10 +112,12 @@ az aro hcp cluster nodepool show \
 +
 Review these fields in the output:
 +
-* `replicas` — the desired worker node count. Changing this is how you scale the cluster.
-* VM size — the Azure VM SKU for workers. The customer controls this; Red Hat does not choose it.
-* OpenShift version — the version for this NodePool. Workers can be at a different version than the control plane during a rolling upgrade. The control plane version is managed by Red Hat SRE independently of this field.
-* Provisioning state — NodePool-level health. A non-Succeeded state is in customer scope to investigate.
+* `properties.replicas` — the desired worker node count. Changing this is how you scale the cluster.
+* `properties.platform.vmSize` — the Azure VM SKU for workers. The customer controls this; Red Hat does not choose it.
+* `properties.version.id` — the OpenShift version for this NodePool. Workers can be at a different version than the control plane during a rolling upgrade. The control plane version is managed by Red Hat SRE independently of this field.
+* `properties.provisioningState` — NodePool-level health. A non-Succeeded state is in customer scope to investigate.
+* `properties.autoRepair` — when true, ARO HCP automatically replaces unhealthy nodes without customer intervention.
+* `properties.status.conditions` — detailed health conditions. Check these when `provisioningState` is not `Succeeded`.
 
 [NOTE]
 ====
