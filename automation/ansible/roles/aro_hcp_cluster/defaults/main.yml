@@ -21,9 +21,6 @@ aro_hcp_cluster_version: "4.22"
 aro_hcp_cluster_np_version: "4.22.1"
 aro_hcp_cluster_channel_group: stable
 
-# Auto-upgrade channel (none = disable auto-upgrades)
-aro_hcp_cluster_auto_upgrade: none
-
 # Node pool sizing
 aro_hcp_cluster_np_replicas: 2
 aro_hcp_cluster_np_vm_size: Standard_D4s_v6

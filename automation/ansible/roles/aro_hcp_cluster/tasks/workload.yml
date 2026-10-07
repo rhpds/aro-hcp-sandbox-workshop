@@ -181,7 +181,6 @@
     --vm-size "{{ aro_hcp_cluster_np_vm_size }}"
     --version "{{ aro_hcp_cluster_np_version }}"
     --channel-group "{{ aro_hcp_cluster_channel_group }}"
-    --auto-upgrade-channel "{{ aro_hcp_cluster_auto_upgrade }}"
   async: "{{ aro_hcp_cluster_create_timeout }}"
   poll: 30
   register: r_np_create
