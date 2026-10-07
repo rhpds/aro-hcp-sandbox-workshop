@@ -143,7 +143,6 @@
     --location "{{ aro_hcp_cluster_location }}"
     --version "{{ aro_hcp_cluster_version }}"
     --channel-group "{{ aro_hcp_cluster_channel_group }}"
-    --auto-upgrade-channel "{{ aro_hcp_cluster_auto_upgrade }}"
     --subnet-id "{{ _net_ids.subnet }}"
     --vnet-integration-subnet-id "{{ _net_ids.integration_subnet }}"
     --nsg "{{ _net_ids.nsg }}"
