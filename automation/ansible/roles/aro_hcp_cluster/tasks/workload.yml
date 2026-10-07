@@ -143,6 +143,7 @@
     --location "{{ aro_hcp_cluster_location }}"
     --version "{{ aro_hcp_cluster_version }}"
     --channel-group "{{ aro_hcp_cluster_channel_group }}"
+    --auto-upgrade-channel "{{ aro_hcp_cluster_auto_upgrade }}"
     --subnet-id "{{ _net_ids.subnet }}"
     --vnet-integration-subnet-id "{{ _net_ids.integration_subnet }}"
     --nsg "{{ _net_ids.nsg }}"
@@ -181,6 +182,7 @@
     --vm-size "{{ aro_hcp_cluster_np_vm_size }}"
     --version "{{ aro_hcp_cluster_np_version }}"
     --channel-group "{{ aro_hcp_cluster_channel_group }}"
+    --auto-upgrade-channel "{{ aro_hcp_cluster_auto_upgrade }}"
   async: "{{ aro_hcp_cluster_create_timeout }}"
   poll: 30
   register: r_np_create
