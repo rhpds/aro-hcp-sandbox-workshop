@@ -124,25 +124,13 @@ Review these fields in the output:
 The NodePool in ARO HCP is the customer-facing equivalent of the HyperShift `NodePool` CRD that lives on the management cluster. The Azure CLI surfaces the same configuration through a managed API without requiring access to the management cluster's Kubernetes API.
 ====
 
-== Section 3 — NodePool Scale-Out and Azure Cross-Reference
+== Section 3 — NodePool Provisioning: Adding Capacity with a New NodePool
 
-This section demonstrates the operational model in action: one Azure CLI call drives Azure VM provisioning transparently.
+This section demonstrates the operational model in action: one Azure CLI call drives Azure VM provisioning transparently. Rather than scaling the existing NodePool (which would require additional Dsv6 quota), you create a temporary second NodePool using the `Standard_D4ds_v6` SKU — a different VM family with available quota. This is also a realistic operational pattern: adding a NodePool with a different SKU to serve a different workload class.
 
 === Record the Baseline
 
-. Capture the current node count before scaling:
-+
-[source,role=execute,subs="attributes"]
-----
-CURRENT_COUNT=$(az aro hcp cluster nodepool show \
-  --cluster-name {aro_hcp_cluster_name} \
-  --resource-group {aro_hcp_cluster_rg} \
-  --name $NODEPOOL_NAME \
-  --query "properties.replicas" --output tsv)
-echo "Current node count: $CURRENT_COUNT"
-----
-
-. Record the current VMs in the managed resource group:
+. Record the current VMs in the managed resource group before adding capacity:
 +
 [source,role=execute,subs="attributes"]
 ----
@@ -152,25 +140,25 @@ az vm list \
   --query "[].{Name:name, Size:hardwareProfile.vmSize}"
 ----
 +
-Note the number of VMs. After scaling, one additional VM will appear here.
+Note the number and SKU of VMs. After creating the new NodePool, one additional `Standard_D4ds_v6` VM will appear here.
 
-=== Scale the NodePool
+=== Create a Temporary NodePool
 
-. Scale the worker NodePool up by one node:
+. Create a single-node NodePool using the `Standard_D4ds_v6` SKU:
 +
 [source,role=execute,subs="attributes"]
 ----
-az aro hcp cluster nodepool update \
+az aro hcp cluster nodepool create \
   --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
-  --name $NODEPOOL_NAME \
-  --replicas $((CURRENT_COUNT + 1))
+  --name temp-nodepool \
+  --vm-size Standard_D4ds_v6 \
+  --replicas 1
 ----
 
 === Inspect Node Labels While Provisioning
 
-New VM provisioning typically takes 5–10 minutes. Use that time to examine how Azure VM metadata surfaces as Kubernetes node labels on an existing worker — the OCP-layer evidence of the Azure infrastructure you inspected in Module 0.
-Run these commands in terminal-2 tab.
+New VM provisioning typically takes 5–10 minutes. Use that time in terminal-2 to examine how Azure VM metadata surfaces as Kubernetes node labels on an existing worker — the OCP-layer evidence of the Azure infrastructure you inspected in Module 0.
 
 . Capture an existing worker node name:
 +
@@ -197,7 +185,7 @@ Note these labels, set automatically by the cloud controller manager when the no
 
 === Cross-Reference in Azure
 
-. While the NodePool is scaling, query the managed resource group for new VMs:
+. While the NodePool is provisioning, query the managed resource group for new VMs:
 +
 [source,role=execute,subs="attributes"]
 ----
@@ -207,11 +195,11 @@ az vm list \
   --query "[].{Name:name, Size:hardwareProfile.vmSize, State:provisioningState}"
 ----
 +
-Refresh this command every 30–60 seconds. You will see a new VM appear with `provisioningState: Creating`, then transition to `Succeeded`.
+Refresh this command every 30–60 seconds. You will see a new `Standard_D4ds_v6` VM appear with `provisioningState: Creating`, then transition to `Succeeded`.
 
 [NOTE]
 ====
-You made one Azure CLI call — updating the node count on the NodePool — and Azure provisioned a VM. You never called `az vm create`, never allocated a NIC, never configured a disk. The ARO HCP service translated the declarative intent into every required Azure API call. This is the operational model ARO HCP delivers at every scale.
+You made one Azure CLI call — creating a NodePool — and Azure provisioned a VM. You never called `az vm create`, never allocated a NIC, never configured a disk. The ARO HCP service translated the declarative intent into every required Azure API call. This is the operational model ARO HCP delivers at every scale.
 ====
 
 . Confirm the new node joins the cluster:
@@ -223,7 +211,7 @@ oc get nodes -w
 +
 Wait for the new node to appear in `Ready` status, then press `Ctrl+C`.
 
-. Compare the new node's labels with the existing worker:
+. Inspect the new node's labels and compare with the existing workers:
 +
 [source,bash,role=execute]
 ----
@@ -232,29 +220,29 @@ NEW_NODE=$(oc get nodes --sort-by=.metadata.creationTimestamp \
 oc describe node $NEW_NODE | grep -E 'topology|instance-type|node\.kubernetes\.io'
 ----
 +
-The new node carries the same `instance-type` as the existing workers — matching the NodePool VM SKU — and is placed in an Azure Availability Zone that may differ from existing nodes depending on ARO HCP's zone-spreading policy.
+The new node shows `Standard_D4ds_v6` as the `instance-type` — different from the existing `Standard_D4s_v6` workers. It is placed in an Azure Availability Zone that may differ from existing nodes depending on ARO HCP's zone-spreading policy.
 
 === Restore the Baseline
 
-. Scale the NodePool back to the original node count:
+. Delete the temporary NodePool:
 +
 [source,role=execute,subs="attributes"]
 ----
-az aro hcp cluster nodepool update \
+az aro hcp cluster nodepool delete \
   --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
-  --name $NODEPOOL_NAME \
-  --replicas $CURRENT_COUNT
+  --name temp-nodepool \
+  --yes
 ----
 
-. Confirm the cluster returns to baseline:
+. Confirm the node is removed from the cluster:
 +
 [source,bash,role=execute]
 ----
 oc get nodes
 ----
 +
-The additional VM will be deprovisioned and removed from the managed resource group.
+The `Standard_D4ds_v6` node will disappear as the VM is deprovisioned from the managed resource group.
 
 == Summary
 
@@ -262,13 +250,13 @@ The additional VM will be deprovisioned and removed from the managed resource gr
 
 * **The control plane is invisible from the customer's context.** `oc get nodes` lists only worker nodes. Control plane namespaces contain no running pods. Cluster operators report `Available=True` with no visible pods. The API server is responding, but its implementation runs in Red Hat's managed infrastructure.
 * **The NodePool is the customer's operational surface.** Every worker scaling action, VM SKU selection, and NodePool version update goes through the NodePool resource. Everything above it — the hosted control plane — is Red Hat's responsibility.
-* **One Azure CLI call drives VM provisioning.** Updating the node count on the NodePool was the only action required. The ARO HCP service handled every Azure API call transparently — VM creation, NIC allocation, disk provisioning.
+* **One Azure CLI call drives VM provisioning.** Creating a NodePool was the only action required. The ARO HCP service handled every Azure API call transparently — VM creation, NIC allocation, disk provisioning.
 
 === Key Takeaways for Customer Conversations
 
 *"How do I scale my cluster?"*
 
-Update the node count on the NodePool using `az aro hcp cluster nodepool update --replicas N`. That is the entire action. No Azure portal, no `az vm create`, no capacity reservation to manage separately. The ARO HCP service translates the declarative intent into every required Azure API call.
+Either update the replica count on an existing NodePool with `az aro hcp cluster nodepool update --replicas N`, or add a new NodePool for a different VM SKU with `az aro hcp cluster nodepool create`. Either way, that is the entire action — no Azure portal, no `az vm create`, no capacity reservation to manage separately. The ARO HCP service translates the declarative intent into every required Azure API call.
 
 *"What if I need a different VM size for my workers?"*
 

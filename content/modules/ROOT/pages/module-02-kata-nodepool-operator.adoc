@@ -6,7 +6,7 @@ Standard OpenShift workloads run inside containers that share the host kernel. F
 
 OpenShift Sandboxed Containers addresses this by running each pod inside a lightweight KVM virtual machine managed by Kata Containers. The pod API is unchanged — no application manifest modifications are required — but the isolation boundary shifts from namespace and cgroup to a hardware-enforced VM boundary. A compromised container cannot escape to the host kernel; it can only reach the Kata guest kernel.
 
-In ARO HCP, this capability requires a dedicated NodePool targeting a VM SKU that supports nested virtualization — the ability to run KVM inside an Azure VM. The Standard_D4s_v6 SKU used by the existing worker NodePool supports nested virtualization, so no additional VM family or quota is required. Kata nodes are kept separate from standard workloads via a NoSchedule taint, ensuring runc containers never land on Kata nodes unintentionally.
+In ARO HCP, this capability requires a dedicated NodePool targeting a VM SKU that supports nested virtualization — the ability to run KVM inside an Azure VM. The Standard_D4ds_v6 SKU used by the existing worker NodePool supports nested virtualization, so no additional VM family or quota is required. Kata nodes are kept separate from standard workloads via a NoSchedule taint, ensuring runc containers never land on Kata nodes unintentionally.
 
 This module provisions that NodePool, installs the Sandboxed Containers Operator, and examines the three resources the operator manages. Module 3 completes the configuration by deploying KataConfig and running the first sandboxed workload.
 
@@ -27,7 +27,7 @@ By the end of this module you will be able to:
 
 Kata Containers require KVM — a hardware-enforced hypervisor that runs each pod in its own VM. Two constraints follow:
 
-* **VM SKU**: Not all Azure VM SKUs support nested virtualization. The Standard_D4s_v6 SKU used by the existing worker NodePool supports it — no separate SKU family or additional quota is needed.
+* **VM SKU**: Not all Azure VM SKUs support nested virtualization. The Standard_D4ds_v6 SKU used by the existing worker NodePool supports it — no separate SKU family or additional quota is needed.
 * **Node isolation**: Each Kata pod carries per-VM overhead. Running standard runc workloads on Kata nodes wastes that overhead. A NoSchedule taint enforces the boundary.
 
 A node label ties this NodePool to KataConfig in Module 3. KataConfig uses a `kataConfigPoolSelector` to identify which nodes should receive Kata binaries. If the label on this NodePool does not exactly match that selector, KataConfig will proceed silently with zero nodes configured — the most common Sandboxed Containers deployment error.
@@ -42,7 +42,7 @@ az aro hcp cluster nodepool create \
   --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name kata-nodepool \
-  --vm-size Standard_D4s_v6 \
+  --vm-size Standard_D4ds_v6 \
   --replicas 2
 ----
 
@@ -70,7 +70,7 @@ az vm list \
   --query "[].{Name:name, Size:hardwareProfile.vmSize, State:provisioningState}"
 ----
 +
-You will see two new `Standard_D4s_v6` VMs alongside the existing worker nodes — the same SKU family, distinguishable by the node name pattern rather than VM size.
+You will see two new `Standard_D4ds_v6` VMs alongside the existing worker nodes — the same SKU family, distinguishable by the node name pattern rather than VM size.
 
 === Label and Taint the Kata Nodes
 
@@ -269,7 +269,7 @@ For production environments that require change-controlled upgrades:
 
 === What You Learned
 
-* **A dedicated NodePool is required for Kata workloads.** The Standard_D4s_v6 SKU supports nested virtualization (KVM) — no additional quota or VM family is needed. The node label must exactly match the `kataConfigPoolSelector` in KataConfig — a mismatch causes silent, partial installation. The NoSchedule taint prevents runc workloads from incurring Kata overhead.
+* **A dedicated NodePool is required for Kata workloads.** The Standard_D4ds_v6 SKU supports nested virtualization (KVM) — no additional quota or VM family is needed. The node label must exactly match the `kataConfigPoolSelector` in KataConfig — a mismatch causes silent, partial installation. The NoSchedule taint prevents runc workloads from incurring Kata overhead.
 * **KVM availability is verifiable before KataConfig runs.** `oc debug node/` and `ls /host/dev/kvm` confirms the hypervisor device is present — the necessary condition for Kata to function.
 * **The Sandboxed Containers Operator manages three resources.** KataConfig installs Kata binaries via MachineConfig. RuntimeClass registers the kata handler with containerd. PeerPodConfig enables Kata-style isolation on SKUs without nested virtualization.
 * **Operator upgrade policy is a production decision.** `Automatic` installPlanApproval is convenient; `Manual` is appropriate for environments where operator upgrades require change management approval.
