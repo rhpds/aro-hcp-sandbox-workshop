@@ -126,7 +126,7 @@ The NodePool in ARO HCP is the customer-facing equivalent of the HyperShift `Nod
 
 == Section 3 — NodePool Provisioning: Adding a Kata-Dedicated NodePool
 
-This section demonstrates the operational model in action: one Azure CLI call drives Azure VM provisioning transparently. You create a second NodePool using the `Standard_D4ds_v6` SKU — a different VM family with available quota that also supports nested virtualization (KVM). This NodePool will be used directly in Module 2 as the Kata Containers NodePool, so it is not deleted at the end of this module.
+This section demonstrates the operational model in action: one Azure CLI call drives Azure VM provisioning transparently. You create a second NodePool using the `Standard_D4s_v5` SKU — a VM generation with available quota that supports nested virtualization (KVM). This NodePool carries directly into Module 2 as the Kata Containers NodePool, so it is not deleted at the end of this module.
 
 === Record the Baseline
 
@@ -140,11 +140,23 @@ az vm list \
   --query "[].{Name:name, Size:hardwareProfile.vmSize}"
 ----
 +
-Note the number and SKU of VMs. After creating the new NodePool, two additional `Standard_D4ds_v6` VMs will appear here.
+Note the number and SKU of VMs. After creating the new NodePool, two additional `Standard_D4s_v5` VMs will appear here.
 
 === Create the Kata NodePool
 
-. Create a two-node NodePool using the `Standard_D4ds_v6` SKU:
+. Capture the OpenShift version from the existing NodePool — the new NodePool must match:
++
+[source,role=execute,subs="attributes"]
+----
+VERSION=$(az aro hcp cluster nodepool show \
+  --cluster-name {aro_hcp_cluster_name} \
+  --resource-group {aro_hcp_cluster_rg} \
+  --name $NODEPOOL_NAME \
+  --query "properties.version.id" --output tsv)
+echo "Version: $VERSION"
+----
+
+. Create a two-node Kata NodePool using the `Standard_D4s_v5` SKU, which supports nested virtualization (KVM):
 +
 [source,role=execute,subs="attributes"]
 ----
@@ -152,8 +164,10 @@ az aro hcp cluster nodepool create \
   --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name kata-nodepool \
-  --vm-size Standard_D4ds_v6 \
-  --replicas 2
+  --vm-size Standard_D4s_v5 \
+  --replicas 2 \
+  --version $VERSION \
+  --channel-group stable
 ----
 
 === Inspect Node Labels While Provisioning
@@ -195,7 +209,7 @@ az vm list \
   --query "[].{Name:name, Size:hardwareProfile.vmSize, State:provisioningState}"
 ----
 +
-Refresh this command every 30–60 seconds. You will see two new `Standard_D4ds_v6` VMs appear with `provisioningState: Creating`, then transition to `Succeeded`.
+Refresh this command every 30–60 seconds. You will see two new `Standard_D4s_v5` VMs appear with `provisioningState: Creating`, then transition to `Succeeded`.
 
 [NOTE]
 ====
@@ -220,7 +234,7 @@ NEW_NODE=$(oc get nodes --sort-by=.metadata.creationTimestamp \
 oc describe node $NEW_NODE | grep -E 'topology|instance-type|node\.kubernetes\.io'
 ----
 +
-The new node shows `Standard_D4ds_v6` as the `instance-type` — different from the existing `Standard_D4s_v6` workers. It is placed in an Azure Availability Zone that may differ from existing nodes depending on ARO HCP's zone-spreading policy.
+The new node shows `Standard_D4s_v5` as the `instance-type` — different from the existing `Standard_D4s_v6` workers. This confirms the two NodePools are backed by different VM generations, each independently configurable.
 
 [NOTE]
 ====
