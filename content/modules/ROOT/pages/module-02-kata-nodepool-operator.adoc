@@ -54,20 +54,20 @@ az aro hcp cluster nodepool show \
 
 Once the nodes are `Ready`, apply the label and taint that Module 3 depends on.
 
-. Confirm the Kata nodes have joined the cluster:
+. Confirm the Kata nodes have joined the cluster and identify them by instance type:
 +
 [source,bash,role=execute]
 ----
-oc get nodes
+oc get nodes -o custom-columns=NAME:.metadata.name,INSTANCE:.metadata.labels."node\.kubernetes\.io/instance-type"
 ----
 +
-Identify the two new nodes from the Kata NodePool — they will have a more recent creation timestamp.
+The `Standard_D4s_v5` nodes are the Kata NodePool. The existing workers show `Standard_D4s_v6`.
 
-. Apply the Kata node label:
+. Apply the Kata node label using the instance-type as the selector — ARO HCP does not surface the AKS-style agentpool label, so instance type is the reliable differentiator:
 +
 [source,bash,role=execute]
 ----
-oc label nodes -l kubernetes.azure.com/agentpool=kata-nodepool \
+oc label nodes -l node.kubernetes.io/instance-type=Standard_D4s_v5 \
   node-role.kubernetes.io/kata=
 ----
 
@@ -76,11 +76,12 @@ oc label nodes -l kubernetes.azure.com/agentpool=kata-nodepool \
 The label `node-role.kubernetes.io/kata=` must match the `kataConfigPoolSelector` in the KataConfig resource you will create in Module 3. An exact match is required. Verify the label is applied correctly before proceeding.
 ====
 
-. Apply the NoSchedule taint to prevent runc workloads from scheduling on Kata nodes:
+. Apply the NoSchedule taint using the same instance-type selector:
 +
 [source,bash,role=execute]
 ----
-oc adm taint nodes -l node-role.kubernetes.io/kata= kata=true:NoSchedule
+oc adm taint nodes -l node.kubernetes.io/instance-type=Standard_D4s_v5 \
+  kata=true:NoSchedule
 ----
 
 . Confirm both label and taint are applied:
