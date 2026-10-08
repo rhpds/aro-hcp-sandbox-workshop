@@ -124,9 +124,9 @@ Review these fields in the output:
 The NodePool in ARO HCP is the customer-facing equivalent of the HyperShift `NodePool` CRD that lives on the management cluster. The Azure CLI surfaces the same configuration through a managed API without requiring access to the management cluster's Kubernetes API.
 ====
 
-== Section 3 — NodePool Provisioning: Adding Capacity with a New NodePool
+== Section 3 — NodePool Provisioning: Adding a Kata-Dedicated NodePool
 
-This section demonstrates the operational model in action: one Azure CLI call drives Azure VM provisioning transparently. Rather than scaling the existing NodePool (which would require additional Dsv6 quota), you create a temporary second NodePool using the `Standard_D4ds_v6` SKU — a different VM family with available quota. This is also a realistic operational pattern: adding a NodePool with a different SKU to serve a different workload class.
+This section demonstrates the operational model in action: one Azure CLI call drives Azure VM provisioning transparently. You create a second NodePool using the `Standard_D4ds_v6` SKU — a different VM family with available quota that also supports nested virtualization (KVM). This NodePool will be used directly in Module 2 as the Kata Containers NodePool, so it is not deleted at the end of this module.
 
 === Record the Baseline
 
@@ -140,20 +140,20 @@ az vm list \
   --query "[].{Name:name, Size:hardwareProfile.vmSize}"
 ----
 +
-Note the number and SKU of VMs. After creating the new NodePool, one additional `Standard_D4ds_v6` VM will appear here.
+Note the number and SKU of VMs. After creating the new NodePool, two additional `Standard_D4ds_v6` VMs will appear here.
 
-=== Create a Temporary NodePool
+=== Create the Kata NodePool
 
-. Create a single-node NodePool using the `Standard_D4ds_v6` SKU:
+. Create a two-node NodePool using the `Standard_D4ds_v6` SKU:
 +
 [source,role=execute,subs="attributes"]
 ----
 az aro hcp cluster nodepool create \
   --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
-  --name temp-nodepool \
+  --name kata-nodepool \
   --vm-size Standard_D4ds_v6 \
-  --replicas 1
+  --replicas 2
 ----
 
 === Inspect Node Labels While Provisioning
@@ -195,7 +195,7 @@ az vm list \
   --query "[].{Name:name, Size:hardwareProfile.vmSize, State:provisioningState}"
 ----
 +
-Refresh this command every 30–60 seconds. You will see a new `Standard_D4ds_v6` VM appear with `provisioningState: Creating`, then transition to `Succeeded`.
+Refresh this command every 30–60 seconds. You will see two new `Standard_D4ds_v6` VMs appear with `provisioningState: Creating`, then transition to `Succeeded`.
 
 [NOTE]
 ====
@@ -211,7 +211,7 @@ oc get nodes -w
 +
 Wait for the new node to appear in `Ready` status, then press `Ctrl+C`.
 
-. Inspect the new node's labels and compare with the existing workers:
+. Inspect the new nodes' labels and compare with the existing workers:
 +
 [source,bash,role=execute]
 ----
@@ -222,27 +222,10 @@ oc describe node $NEW_NODE | grep -E 'topology|instance-type|node\.kubernetes\.i
 +
 The new node shows `Standard_D4ds_v6` as the `instance-type` — different from the existing `Standard_D4s_v6` workers. It is placed in an Azure Availability Zone that may differ from existing nodes depending on ARO HCP's zone-spreading policy.
 
-=== Restore the Baseline
-
-. Delete the temporary NodePool:
-+
-[source,role=execute,subs="attributes"]
-----
-az aro hcp cluster nodepool delete \
-  --cluster-name {aro_hcp_cluster_name} \
-  --resource-group {aro_hcp_cluster_rg} \
-  --name temp-nodepool \
-  --yes
-----
-
-. Confirm the node is removed from the cluster:
-+
-[source,bash,role=execute]
-----
-oc get nodes
-----
-+
-The `Standard_D4ds_v6` node will disappear as the VM is deprovisioned from the managed resource group.
+[NOTE]
+====
+The `kata-nodepool` NodePool remains running. In Module 2, you will apply a node label and NoSchedule taint to these nodes and install the Sandboxed Containers Operator to enable Kata workloads on them.
+====
 
 == Summary
 

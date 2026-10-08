@@ -8,13 +8,13 @@ OpenShift Sandboxed Containers addresses this by running each pod inside a light
 
 In ARO HCP, this capability requires a dedicated NodePool targeting a VM SKU that supports nested virtualization — the ability to run KVM inside an Azure VM. The Standard_D4ds_v6 SKU used by the existing worker NodePool supports nested virtualization, so no additional VM family or quota is required. Kata nodes are kept separate from standard workloads via a NoSchedule taint, ensuring runc containers never land on Kata nodes unintentionally.
 
-This module provisions that NodePool, installs the Sandboxed Containers Operator, and examines the three resources the operator manages. Module 3 completes the configuration by deploying KataConfig and running the first sandboxed workload.
+The `kata-nodepool` NodePool was already provisioned at the end of Module 1. This module labels and taints those nodes, installs the Sandboxed Containers Operator, and examines the three resources the operator manages. Module 3 completes the configuration by deploying KataConfig and running the first sandboxed workload.
 
 == Learning Objectives
 
 By the end of this module you will be able to:
 
-* Create a dedicated Kata NodePool targeting a nested-virtualization-capable VM SKU using the Azure CLI
+* Confirm the Kata NodePool provisioned in Module 1 is ready and inspect its configuration
 * Apply node labels and taints that bind the NodePool to KataConfig in Module 3
 * Verify KVM availability on Kata nodes from the hosted cluster context
 * Deploy the Sandboxed Containers Operator via an OLM Subscription
@@ -32,21 +32,11 @@ Kata Containers require KVM — a hardware-enforced hypervisor that runs each po
 
 A node label ties this NodePool to KataConfig in Module 3. KataConfig uses a `kataConfigPoolSelector` to identify which nodes should receive Kata binaries. If the label on this NodePool does not exactly match that selector, KataConfig will proceed silently with zero nodes configured — the most common Sandboxed Containers deployment error.
 
-=== Create the NodePool
+=== Confirm the NodePool Is Ready
 
-. Create the Kata-dedicated NodePool using the same VM SKU as the existing worker NodePool:
-+
-[source,role=execute,subs="attributes"]
-----
-az aro hcp cluster nodepool create \
-  --cluster-name {aro_hcp_cluster_name} \
-  --resource-group {aro_hcp_cluster_rg} \
-  --name kata-nodepool \
-  --vm-size Standard_D4ds_v6 \
-  --replicas 2
-----
+The `kata-nodepool` NodePool was created at the end of Module 1. Confirm it is fully provisioned before proceeding.
 
-. Track provisioning state until `Succeeded`:
+. Check the NodePool provisioning state:
 +
 [source,role=execute,subs="attributes"]
 ----
@@ -54,23 +44,11 @@ az aro hcp cluster nodepool show \
   --cluster-name {aro_hcp_cluster_name} \
   --resource-group {aro_hcp_cluster_rg} \
   --name kata-nodepool \
-  --query "{State:properties.provisioningState, Replicas:properties.replicas}" \
+  --query "{State:properties.provisioningState, Replicas:properties.replicas, VMSize:properties.platform.vmSize}" \
   --output table
 ----
 +
-Repeat every 30–60 seconds. Provisioning typically takes 5–10 minutes.
-
-. While waiting, observe the new VMs appear in the managed resource group:
-+
-[source,role=execute,subs="attributes"]
-----
-az vm list \
-  --resource-group {aro_hcp_cluster_managed_rg} \
-  --output table \
-  --query "[].{Name:name, Size:hardwareProfile.vmSize, State:provisioningState}"
-----
-+
-You will see two new `Standard_D4ds_v6` VMs alongside the existing worker nodes — the same SKU family, distinguishable by the node name pattern rather than VM size.
+`provisioningState` must be `Succeeded` before continuing.
 
 === Label and Taint the Kata Nodes
 
