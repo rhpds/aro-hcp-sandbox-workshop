@@ -6,7 +6,14 @@ silent: false
 aro_hcp_keycloak_cluster_name: "{{ aro_hcp_cluster_name | default('aro' + guid) }}"
 aro_hcp_keycloak_cluster_rg: "{{ aro_hcp_cluster_rg | default(aro_hcp_keycloak_cluster_name + '-aro-hcp-rg') }}"
 
-# Admin password — must be provided by AgnosticV
+# Keycloak deployment
+aro_hcp_keycloak_namespace: keycloak
+aro_hcp_keycloak_image: quay.io/keycloak/keycloak:24.0
+aro_hcp_keycloak_realm: openshift
+aro_hcp_keycloak_console_client_id: openshift-console
+
+# Admin user for Keycloak + OCP console
+aro_hcp_keycloak_admin_user: admin
 aro_hcp_keycloak_admin_password: REPLACE_ME
 
 # OCP version for oc CLI download
@@ -16,8 +23,18 @@ aro_hcp_keycloak_oc_version: "4.22"
 aro_hcp_keycloak_kubeconfig_dir: /home/azure/.kube
 aro_hcp_keycloak_kubeconfig: /home/azure/.kube/config
 
-# Keycloak deployment
-aro_hcp_keycloak_namespace: keycloak
+# Keycloak deployment resources
+aro_hcp_keycloak_cpu_request: 500m
+aro_hcp_keycloak_cpu_limit: "1"
+aro_hcp_keycloak_mem_request: 512Mi
+aro_hcp_keycloak_mem_limit: 1Gi
+
+# Keycloak readiness timeout (seconds)
+aro_hcp_keycloak_deploy_timeout: 180
+aro_hcp_keycloak_api_retries: 30
+aro_hcp_keycloak_api_retry_delay: 5
+
+# Keycloak DB
 aro_hcp_keycloak_db_password: "{{ aro_hcp_keycloak_admin_password }}"
 
 # Namespaces where Red Hat registry pull secret is injected
