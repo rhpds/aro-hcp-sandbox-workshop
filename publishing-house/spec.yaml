@@ -32,11 +32,11 @@ spec:
     - id: module-00
       title: "Introduction, Pre-flight & Cluster Resource Group"
       duration_min: 20
-      status: in_progress
+      status: complete
     - id: module-01
       title: "Where Is the Control Plane? HyperShift CRDs + NodePool Scaling"
       duration_min: 20
-      status: in_progress
+      status: complete
     - id: module-02
       title: "Kata-Dedicated NodePool & Sandboxed Containers Operator"
       duration_min: 20
