@@ -94,30 +94,16 @@
     - "'already exists' not in r_create_pull_secret.stderr"
   when: ocp4_pull_secret is defined
 
-- name: Get all service accounts in target namespaces
-  ansible.builtin.command: >-
-    oc get sa -n {{ item }} -o jsonpath='{.items[*].metadata.name}'
+- name: Link pull secret to all service accounts in each namespace
+  ansible.builtin.shell: |
+    for sa in $(oc get sa -n {{ item }} -o jsonpath='{.items[*].metadata.name}'); do
+      oc secrets link "$sa" rh-pull-secret --for=pull -n {{ item }}
+    done
+  args:
+    executable: /bin/bash
   environment:
     KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
   loop: "{{ aro_hcp_pull_secret_namespaces }}"
-  register: r_namespace_sas
-  changed_when: false
-  when: ocp4_pull_secret is defined
-
-- name: Link pull secret to all service accounts
-  ansible.builtin.command: >-
-    oc secrets link {{ item.1 }} rh-pull-secret --for=pull -n {{ item.0.item }}
-  environment:
-    KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
-  loop: >-
-    {{ r_namespace_sas.results | selectattr('stdout', 'defined')
-       | map(attribute='stdout')
-       | zip(r_namespace_sas.results | selectattr('item', 'defined') | map(attribute='item'))
-       | list
-       | map('reverse')
-       | list
-       | json_query('[]')
-       | list }}
   changed_when: true
   when: ocp4_pull_secret is defined
 
