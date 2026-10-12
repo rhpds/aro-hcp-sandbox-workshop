@@ -68,9 +68,9 @@
       - r_whoami.stdout is search('break-glass')
     fail_msg: "Expected break-glass user, got {{ r_whoami.stdout }}"
 
-# Step 10b: Inject Red Hat registry pull secret
-# ARO HCP reconciles the global pull-secret, so we create per-namespace secrets
-# and link to ALL service accounts (OLM creates dynamic SAs for operator installs).
+# Step 10b: Inject Red Hat registry pull secret into kube-system
+# ARO HCP propagates a secret named "additional-pull-secret" in kube-system
+# to all new namespaces automatically — no per-namespace injection needed.
 - name: Write pull secret to temporary file
   ansible.builtin.copy:
     content: "{{ ocp4_pull_secret }}"
@@ -78,33 +78,19 @@
     mode: "0600"
   when: ocp4_pull_secret is defined
 
-- name: Create Red Hat registry pull secret in namespaces
+- name: Create additional-pull-secret in kube-system
   ansible.builtin.command: >-
-    oc create secret generic rh-pull-secret
+    oc create secret generic additional-pull-secret
     --from-file=.dockerconfigjson=/tmp/.rh-pull-secret.json
     --type=kubernetes.io/dockerconfigjson
-    -n {{ item }}
+    -n kube-system
   environment:
     KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
-  loop: "{{ aro_hcp_pull_secret_namespaces }}"
   register: r_create_pull_secret
   changed_when: r_create_pull_secret.rc == 0
   failed_when:
     - r_create_pull_secret.rc != 0
     - "'already exists' not in r_create_pull_secret.stderr"
-  when: ocp4_pull_secret is defined
-
-- name: Link pull secret to all service accounts in each namespace
-  ansible.builtin.shell: |
-    for sa in $(oc get sa -n {{ item }} -o jsonpath='{.items[*].metadata.name}'); do
-      oc secrets link "$sa" rh-pull-secret --for=pull -n {{ item }}
-    done
-  args:
-    executable: /bin/bash
-  environment:
-    KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
-  loop: "{{ aro_hcp_pull_secret_namespaces }}"
-  changed_when: true
   when: ocp4_pull_secret is defined
 
 - name: Remove temporary pull secret file
