@@ -134,6 +134,58 @@ exit
 
 The Sandboxed Containers Operator manages the lifecycle of Kata binaries and runtime configuration on the cluster. It is installed from the Red Hat operator catalog via a standard OLM Subscription.
 
+Before applying the Subscription, it is worth understanding the OLM pipeline that makes operator installation work. Every operator install flows through the same four objects: CatalogSource → PackageManifest → Subscription → InstallPlan → CSV. Knowing this sequence tells you exactly where to look when an installation stalls.
+
+=== Inspect the Operator Catalog
+
+OLM sources operator metadata from CatalogSources. Three ship with every OpenShift cluster.
+
+. List the available CatalogSources:
++
+[source,bash,role=execute]
+----
+oc get catalogsource -n openshift-marketplace
+----
++
+The `redhat-operators` CatalogSource contains Red Hat's supported operators, including the Sandboxed Containers Operator. The `certified-operators` and `community-operators` sources cover ISV-certified and community-maintained operators respectively.
+
+. Confirm the `redhat-operators` catalog is healthy:
++
+[source,bash,role=execute]
+----
+oc get catalogsource redhat-operators -n openshift-marketplace \
+  -o jsonpath='{.status.connectionState.lastObservedState}' && echo
+----
++
+The output must be `READY`. A non-ready catalog means OLM cannot resolve operator packages from it — the most common cause of a Subscription that never produces an InstallPlan.
+
+=== Look Up the Operator in the PackageManifest
+
+OLM exposes each operator's available channels and versions as a `PackageManifest` resource, which is generated dynamically from the CatalogSource.
+
+. Confirm the Sandboxed Containers Operator is available:
++
+[source,bash,role=execute]
+----
+oc get packagemanifest sandboxed-containers-operator -n openshift-marketplace
+----
+
+. List the available channels and the default:
++
+[source,bash,role=execute]
+----
+oc get packagemanifest sandboxed-containers-operator -n openshift-marketplace \
+  -o jsonpath='{range .status.channels[*]}{.name}{"\n"}{end}'
+----
++
+[source,bash,role=execute]
+----
+oc get packagemanifest sandboxed-containers-operator -n openshift-marketplace \
+  -o jsonpath='{.status.defaultChannel}' && echo
+----
++
+Channels follow a `stable`, `stable-x.y` naming convention. Subscribing to `stable` tracks the latest stable release automatically. Subscribing to a pinned channel like `stable-1.3` locks the operator to that minor version line.
+
 === Apply the Operator Subscription
 
 The installation requires three resources in sequence: a Namespace, an OperatorGroup, and a Subscription.
@@ -170,6 +222,27 @@ spec:
   sourceNamespace: openshift-marketplace
 EOF
 ----
+
+=== Inspect the InstallPlan
+
+When OLM processes a Subscription, it creates an `InstallPlan` — a record of exactly which CSV versions and CRDs will be installed. With `installPlanApproval: Automatic`, OLM approves and executes the plan immediately. With `Manual`, it waits for a human to approve it.
+
+. Wait a few seconds for OLM to create the InstallPlan, then inspect it:
++
+[source,bash,role=execute]
+----
+oc get installplan -n openshift-sandboxed-containers-operator
+----
+
+. Confirm which CSV version the plan will install:
++
+[source,bash,role=execute]
+----
+oc get installplan -n openshift-sandboxed-containers-operator \
+  -o jsonpath='{.items[0].spec.clusterServiceVersionNames}' && echo
+----
++
+This shows the exact CSV version OLM resolved from the `stable` channel. The InstallPlan is the handoff point between OLM's resolution engine and the actual resource creation — if a plan exists but the CSV never reaches `Succeeded`, the failure is in execution (image pull, RBAC, webhook), not in resolution.
 
 === Watch the CSV Reach Succeeded
 
