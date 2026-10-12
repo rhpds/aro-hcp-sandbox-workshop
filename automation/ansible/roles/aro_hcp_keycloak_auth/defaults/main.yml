@@ -36,12 +36,3 @@ aro_hcp_keycloak_api_retry_delay: 5
 
 # Keycloak DB
 aro_hcp_keycloak_db_password: "{{ aro_hcp_keycloak_admin_password }}"
-
-# Namespaces where Red Hat registry pull secret is injected
-aro_hcp_pull_secret_namespaces:
-  - default
-  - kube-system
-  - openshift-config
-  - openshift-marketplace
-  - openshift-operators
-  - openshift-sandboxed-containers-operator
