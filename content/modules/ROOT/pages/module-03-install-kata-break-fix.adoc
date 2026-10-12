@@ -52,12 +52,27 @@ spec:
 EOF
 ----
 
-. Confirm the resource was created:
+. Confirm the resource was created and note the status columns:
 +
 [source,bash,role=execute]
 ----
 oc get kataconfig example-kataconfig
 ----
++
+Expected output:
++
+----
+NAME                 INPROGRESS   COMPLETED   TOTAL   AGE
+example-kataconfig                                    Xm
+----
++
+The three status columns track the MCO rollout as it runs:
++
+* `INPROGRESS` — number of nodes currently being processed (cordoned, draining, or rebooting)
+* `COMPLETED` — number of nodes that have finished installing Kata binaries and returned to Ready
+* `TOTAL` — total number of nodes targeted by the `kataConfigPoolSelector`
++
+All three are empty immediately after creation. They populate once the MCO begins cordoning the first node. If `TOTAL` remains empty after several minutes, the `kataConfigPoolSelector` matched zero nodes — verify the label with `oc get nodes -l node-role.kubernetes.io/kata=`.
 
 [NOTE]
 ====
