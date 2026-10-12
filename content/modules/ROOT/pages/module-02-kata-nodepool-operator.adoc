@@ -195,7 +195,7 @@ The operator manager pod should be in `Running` state.
 
 === The Three Resources the Operator Manages
 
-The Sandboxed Containers Operator installs three CRDs. Examine them:
+The Sandboxed Containers Operator installs two CRDs and creates one additional Kubernetes resource. Examine the CRDs:
 
 [source,bash,role=execute]
 ----
