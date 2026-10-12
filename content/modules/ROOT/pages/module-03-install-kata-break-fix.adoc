@@ -79,22 +79,30 @@ All three are empty immediately after creation. They populate once the MCO begin
 The `kataConfigPoolSelector` value `node-role.kubernetes.io/kata: ""` must be an exact match — same key, same value — as the label applied in Module 2. An empty string (`""`) is a valid label value in Kubernetes. If the selector uses any other value, KataConfig installs on zero nodes silently.
 ====
 
-== Section 2 — Watch the MachineConfigPool Cycle
+== Section 2 — Watch the Kata Installation Rollout
 
-When KataConfig is applied, the Sandboxed Containers Operator generates a MachineConfig containing the Kata binaries and containerd runtime configuration. The MachineConfig Operator (MCO) then rolls this configuration onto each matching node in sequence: cordoning the node, draining workloads, rebooting to apply the new MachineConfig, and returning the node to Ready state.
+When KataConfig is applied, the Sandboxed Containers Operator installs Kata binaries onto each matching node in sequence: cordoning the node, draining workloads, rebooting, and returning the node to Ready state.
+
+In ARO HCP, the MachineConfigPool API is not exposed to the customer — node configuration is managed internally by the service. Progress is tracked instead through the KataConfig status columns and the node state directly.
 
 This cycle typically takes several minutes per node. Use two terminals to observe it in parallel.
 
-=== Terminal 1 — Watch the MachineConfigPool
+=== Terminal 1 — Watch the KataConfig Status
 
-. Watch the `kata` MachineConfigPool status:
+. Watch the KataConfig status columns for progress:
 +
 [source,bash,role=execute]
 ----
-oc get machineconfigpool kata -w
+oc get kataconfig example-kataconfig -w
 ----
 +
-Observe the `UPDATED`, `UPDATING`, and `DEGRADED` columns. During the rollout, `UPDATING` will be `True` and the `MACHINE COUNT` and `UPDATED MACHINE COUNT` columns show progress. When all nodes have cycled, `UPDATED` returns to `True` and `UPDATING` drops to `False`.
+As the rollout proceeds, the columns populate:
++
+* `INPROGRESS` — number of nodes currently being processed
+* `COMPLETED` — number of nodes with Kata binaries installed
+* `TOTAL` — total number of nodes targeted
++
+Wait for `COMPLETED` to equal `TOTAL` before continuing to Section 3. Press `Ctrl+C` once complete.
 
 === Terminal 2 — Watch the Kata Nodes
 
@@ -108,14 +116,12 @@ oc get nodes -l node-role.kubernetes.io/kata= -w
 Each Kata node will transition through:
 +
 * `Ready,SchedulingDisabled` — node cordoned, no new pods will be scheduled
-* `NotReady,SchedulingDisabled` — node rebooting to apply the new MachineConfig
+* `NotReady,SchedulingDisabled` — node rebooting to apply the new configuration
 * `Ready` — node returned to service with Kata binaries installed
-
-Wait for all Kata nodes to show `Ready` and the MachineConfigPool to show `Updated: True` before continuing to Section 3.
 
 [NOTE]
 ====
-The reboot cycle is not unique to Kata — any MachineConfig change triggers the same cordon/drain/reboot/Ready sequence. This is the MCO's standard mechanism for applying node-level configuration changes in OpenShift. The Kata binaries are delivered as a MachineConfig to ensure they survive node replacement and OS updates.
+ARO HCP does not expose the `machineconfigpool` API — that resource belongs to the MachineConfig Operator (MCO) in self-managed OpenShift. In ARO HCP, node-level configuration is managed internally by the service. The KataConfig status columns (`INPROGRESS`, `COMPLETED`, `TOTAL`) are the authoritative progress indicator for Kata installation on ARO HCP.
 ====
 
 == Section 3 — Verify Kata Installation
@@ -303,7 +309,7 @@ This scopes the privilege grant precisely to workloads that require it, followin
 === What You Learned
 
 * **The `kataConfigPoolSelector` is the most common Kata misconfiguration.** A label mismatch causes zero nodes to be configured with no error output. Verify with `oc get nodes -l node-role.kubernetes.io/kata=` before applying KataConfig.
-* **MachineConfig delivers Kata binaries to nodes.** The MCO cordon/drain/reboot cycle is the standard mechanism for node-level configuration changes. Each Kata node reboots once to install the Kata runtime.
+* **KataConfig tracks the rollout through status columns.** In ARO HCP, the `machineconfigpool` API is not exposed. Progress is visible in the `INPROGRESS`, `COMPLETED`, and `TOTAL` columns of `oc get kataconfig`. Each Kata node cordons, drains, reboots, and returns Ready as Kata binaries are installed.
 * **Kata installation requires two-layer verification.** The `kata` RuntimeClass in the cluster proves the API is registered. The kata handler in the containerd runtime registry on the node proves the binary is installed. Both must be present for Kata pods to run.
 * **The most common field admission failure is a missing SCC grant.** The pod is blocked at admission with a `Forbidden` event. `oc adm policy who-can use scc kata-scc` immediately surfaces which accounts have the grant — and confirms the one that does not.
 * **SCC grants should follow least privilege.** Granting to the `default` service account is expedient but broad. A dedicated service account scoped to Kata workloads is the production-appropriate pattern.
@@ -324,4 +330,4 @@ Run `oc describe pod <name>` and look for the SCC message in events. Then `oc ad
 
 *"Is rebooting nodes acceptable in a production ARO HCP cluster?"*
 
-Yes — the MCO performs a rolling reboot, one node at a time, with cordon and drain before each reboot. Workloads are rescheduled before the node goes down. The kata-nodepool has a NoSchedule taint, so only Kata workloads land there — those workloads are specifically designed for this node type and do not need to be migrated to other pools.
+Yes — Kata installation performs a rolling reboot, one node at a time, with cordon and drain before each reboot. Workloads are rescheduled before the node goes down. The kata-nodepool has a NoSchedule taint, so only Kata workloads land there — those workloads are specifically designed for this node type and do not need to be migrated to other pools.
