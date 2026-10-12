@@ -44,3 +44,4 @@ aro_hcp_pull_secret_namespaces:
   - openshift-config
   - openshift-marketplace
   - openshift-operators
+  - openshift-sandboxed-containers-operator
