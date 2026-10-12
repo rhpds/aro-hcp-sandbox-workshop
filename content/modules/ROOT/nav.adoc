@@ -2,3 +2,4 @@
 * xref:module-00-intro-preflight.adoc[Module 0 : Introduction, Pre-flight & Cluster Resource Group]
 * xref:module-01-control-plane-nodepool.adoc[Module 1 : Where Is the Control Plane? HyperShift CRDs + NodePool Scaling]
 * xref:module-02-kata-nodepool-operator.adoc[Module 2 : A Second NodePool: Kata Containers on ARO HCP]
+* xref:module-03-install-kata-break-fix.adoc[Module 3 : Install Kata, Break It, Fix It]

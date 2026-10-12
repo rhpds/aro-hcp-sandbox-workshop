@@ -1,0 +1,312 @@
+= Install Kata, Break It, Fix It
+
+== Value Proposition
+
+Installing the Sandboxed Containers Operator is necessary but not sufficient. The Kata runtime does not activate until a `KataConfig` resource tells the operator which nodes to configure. That configuration step is deceptively easy to get wrong: a single label mismatch between the `kataConfigPoolSelector` in KataConfig and the label applied to the Kata NodePool in Module 2 causes the operator to proceed silently — no error, no warning, zero nodes configured.
+
+This module closes the installation loop. You apply KataConfig with careful attention to the selector, watch the MachineConfigPool update cycle in real time, and verify the result at two layers: the cluster-level `kata` RuntimeClass and the containerd runtime registry on the node itself.
+
+Then you deliberately break it. The most common Sandboxed Containers admission failure seen in the field is a `Forbidden` error caused by missing SCC configuration. You reproduce it, trace it with `oc describe` and `oc adm policy who-can`, and fix it. The module closes with a discussion of production-appropriate SCC assignment strategy.
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Configure KataConfig with a `kataConfigPoolSelector` that correctly matches the Kata NodePool node label from Module 2
+* Observe the MachineConfigPool update cycle as nodes cordon, drain, reboot, and return to Ready state
+* Verify Kata installation at two layers: the `kata` RuntimeClass in the cluster and the kata handler in containerd's runtime registry
+* Reproduce and trace the most common Kata admission failure using pod events and `oc adm policy who-can`
+* Fix the admission failure by granting the Kata SCC to the service account
+
+== Section 1 — Apply KataConfig
+
+=== The kataConfigPoolSelector
+
+KataConfig does not install Kata binaries on every node — it installs them only on nodes that match the `kataConfigPoolSelector`. The selector is a standard Kubernetes label selector. If it does not exactly match the label applied to the Kata NodePool nodes in Module 2, the operator proceeds with zero nodes configured and reports no error.
+
+Confirm the label is present on the Kata nodes before applying KataConfig:
+
+[source,bash,role=execute]
+----
+oc get nodes -l node-role.kubernetes.io/kata= \
+  -o custom-columns=NAME:.metadata.name,INSTANCE:.metadata.labels."node\.kubernetes\.io/instance-type"
+----
+
+Both `Standard_D4s_v5` nodes should appear. If this returns nothing, the label from Module 2 was not applied correctly — stop and re-apply it before continuing.
+
+=== Apply KataConfig
+
+. Apply the KataConfig resource, setting the `kataConfigPoolSelector` to match `node-role.kubernetes.io/kata`:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: kataconfiguration.openshift.io/v1
+kind: KataConfig
+metadata:
+  name: example-kataconfig
+spec:
+  kataConfigPoolSelector:
+    matchLabels:
+      node-role.kubernetes.io/kata: ""
+EOF
+----
+
+. Confirm the resource was created:
++
+[source,bash,role=execute]
+----
+oc get kataconfig example-kataconfig
+----
+
+[NOTE]
+====
+The `kataConfigPoolSelector` value `node-role.kubernetes.io/kata: ""` must be an exact match — same key, same value — as the label applied in Module 2. An empty string (`""`) is a valid label value in Kubernetes. If the selector uses any other value, KataConfig installs on zero nodes silently.
+====
+
+== Section 2 — Watch the MachineConfigPool Cycle
+
+When KataConfig is applied, the Sandboxed Containers Operator generates a MachineConfig containing the Kata binaries and containerd runtime configuration. The MachineConfig Operator (MCO) then rolls this configuration onto each matching node in sequence: cordoning the node, draining workloads, rebooting to apply the new MachineConfig, and returning the node to Ready state.
+
+This cycle typically takes several minutes per node. Use two terminals to observe it in parallel.
+
+=== Terminal 1 — Watch the MachineConfigPool
+
+. Watch the `kata` MachineConfigPool status:
++
+[source,bash,role=execute]
+----
+oc get machineconfigpool kata -w
+----
++
+Observe the `UPDATED`, `UPDATING`, and `DEGRADED` columns. During the rollout, `UPDATING` will be `True` and the `MACHINE COUNT` and `UPDATED MACHINE COUNT` columns show progress. When all nodes have cycled, `UPDATED` returns to `True` and `UPDATING` drops to `False`.
+
+=== Terminal 2 — Watch the Kata Nodes
+
+. In a second terminal, watch the Kata nodes directly:
++
+[source,bash,role=execute]
+----
+oc get nodes -l node-role.kubernetes.io/kata= -w
+----
++
+Each Kata node will transition through:
++
+* `Ready,SchedulingDisabled` — node cordoned, no new pods will be scheduled
+* `NotReady,SchedulingDisabled` — node rebooting to apply the new MachineConfig
+* `Ready` — node returned to service with Kata binaries installed
+
+Wait for all Kata nodes to show `Ready` and the MachineConfigPool to show `Updated: True` before continuing to Section 3.
+
+[NOTE]
+====
+The reboot cycle is not unique to Kata — any MachineConfig change triggers the same cordon/drain/reboot/Ready sequence. This is the MCO's standard mechanism for applying node-level configuration changes in OpenShift. The Kata binaries are delivered as a MachineConfig to ensure they survive node replacement and OS updates.
+====
+
+== Section 3 — Verify Kata Installation
+
+Kata installation must be verified at two layers. A RuntimeClass present in the cluster confirms the API is registered. The kata handler present in containerd's runtime registry on the node confirms the binary is actually installed and usable.
+
+=== Layer 1 — Cluster: RuntimeClass
+
+. Confirm the `kata` RuntimeClass now exists:
++
+[source,bash,role=execute]
+----
+oc get runtimeclass kata
+----
++
+Expected output:
++
+----
+NAME   HANDLER   AGE
+kata   kata      Xm
+----
++
+The `HANDLER` value `kata` tells containerd which runtime binary to call when a pod requests this class. If this resource is absent, the MachineConfigPool rollout did not complete or the `kataConfigPoolSelector` matched zero nodes.
+
+=== Layer 2 — Node: containerd Runtime Registry
+
+. Capture a Kata node name:
++
+[source,bash,role=execute]
+----
+KATA_NODE=$(oc get nodes -l node-role.kubernetes.io/kata= \
+  -o jsonpath='{.items[0].metadata.name}')
+echo $KATA_NODE
+----
+
+. Open a debug shell on the Kata node:
++
+[source,bash,role=execute]
+----
+oc debug node/$KATA_NODE
+----
+
+. Inside the debug shell, inspect the containerd runtime registry:
++
+[source,bash,role=execute]
+----
+chroot /host crictl info | grep -A 5 kata
+----
++
+The `kata` handler should appear in the `runtimes` section of the containerd configuration. If it is absent, the MachineConfig did not apply correctly on this node — check `oc get machineconfigpool kata` and look for degraded conditions.
+
+. Exit the debug shell:
++
+[source,bash,role=execute]
+----
+exit
+----
+
+== Section 4 — Break It: Trigger the Admission Failure
+
+The most common Kata deployment error seen in the field is not a configuration error — it is an admission error. Pods requesting the `kata` runtime require elevated privileges to create the nested VM. Without the correct SCC grant, OpenShift's admission controller blocks the pod before it is ever scheduled.
+
+=== Deploy a Kata Pod Without SCC
+
+. Create a namespace for the test:
++
+[source,bash,role=execute]
+----
+oc new-project kata-test
+----
+
+. Attempt to deploy a Kata pod without any SCC configuration:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kata-test-pod
+  namespace: kata-test
+spec:
+  runtimeClassName: kata
+  tolerations:
+  - key: kata
+    value: "true"
+    effect: NoSchedule
+  containers:
+  - name: ubi
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sleep", "infinity"]
+EOF
+----
+
+. Observe that the pod does not start:
++
+[source,bash,role=execute]
+----
+oc get pod kata-test-pod -n kata-test
+----
+
+=== Trace the Failure
+
+. Examine the pod events to locate the admission error:
++
+[source,bash,role=execute]
+----
+oc describe pod kata-test-pod -n kata-test | grep -A 10 Events
+----
++
+The events section will contain a `Forbidden` message referencing the SCC policy. The pod was blocked at admission — it never reached the scheduler.
+
+. Identify which service accounts currently have permission to use the Kata SCC:
++
+[source,bash,role=execute]
+----
+oc adm policy who-can use scc kata-scc
+----
++
+The `default` service account in the `kata-test` namespace is not listed. The pod is running as `default` — it does not have the required SCC grant.
+
+[NOTE]
+====
+This is the field failure pattern: the operator is installed, KataConfig is applied, the RuntimeClass exists — everything looks correct — but pods fail at admission. The `Forbidden` event and `oc adm policy who-can` are the two tools that immediately surface the root cause.
+====
+
+== Section 5 — Fix It: Grant the SCC
+
+=== Grant the SCC to the Service Account
+
+. Grant the Kata SCC to the `default` service account in the `kata-test` namespace:
++
+[source,bash,role=execute]
+----
+oc adm policy add-scc-to-user kata-scc -z default -n kata-test
+----
+
+. Delete and re-apply the pod so it is evaluated under the new SCC grant:
++
+[source,bash,role=execute]
+----
+oc delete pod kata-test-pod -n kata-test
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kata-test-pod
+  namespace: kata-test
+spec:
+  runtimeClassName: kata
+  tolerations:
+  - key: kata
+    value: "true"
+    effect: NoSchedule
+  containers:
+  - name: ubi
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sleep", "infinity"]
+EOF
+----
+
+. Confirm the pod reaches `Running` state:
++
+[source,bash,role=execute]
+----
+oc get pod kata-test-pod -n kata-test -w
+----
++
+Wait for `STATUS` to show `Running`, then press `Ctrl+C`.
+
+=== Production Consideration: SCC Assignment Strategy
+
+The fix above grants the `kata-scc` to the `default` service account. This works, but it means every pod in the `kata-test` namespace running as `default` now has Kata SCC privileges — including workloads that are not Kata pods.
+
+For production environments:
+
+* Create a dedicated service account for Kata workloads: `oc create serviceaccount kata-workloads -n <namespace>`
+* Grant the SCC to that account only: `oc adm policy add-scc-to-user kata-scc -z kata-workloads -n <namespace>`
+* Set `serviceAccountName: kata-workloads` in each Kata pod spec
+
+This scopes the privilege grant precisely to workloads that require it, following the principle of least privilege. The `default` service account retains no Kata SCC grant.
+
+== Summary
+
+=== What You Learned
+
+* **The `kataConfigPoolSelector` is the most common Kata misconfiguration.** A label mismatch causes zero nodes to be configured with no error output. Verify with `oc get nodes -l node-role.kubernetes.io/kata=` before applying KataConfig.
+* **MachineConfig delivers Kata binaries to nodes.** The MCO cordon/drain/reboot cycle is the standard mechanism for node-level configuration changes. Each Kata node reboots once to install the Kata runtime.
+* **Kata installation requires two-layer verification.** The `kata` RuntimeClass in the cluster proves the API is registered. The kata handler in the containerd runtime registry on the node proves the binary is installed. Both must be present for Kata pods to run.
+* **The most common field admission failure is a missing SCC grant.** The pod is blocked at admission with a `Forbidden` event. `oc adm policy who-can use scc kata-scc` immediately surfaces which accounts have the grant — and confirms the one that does not.
+* **SCC grants should follow least privilege.** Granting to the `default` service account is expedient but broad. A dedicated service account scoped to Kata workloads is the production-appropriate pattern.
+
+=== Key Takeaways for Customer Conversations
+
+*"KataConfig is installed but pods aren't using Kata — what's wrong?"*
+
+Check the `kataConfigPoolSelector` first. Run `oc get nodes -l node-role.kubernetes.io/kata=` — if it returns nothing, the label either wasn't applied or doesn't match the selector exactly. KataConfig silently skips nodes whose labels don't match.
+
+*"How do I know Kata is actually installed on the node and not just registered in the API?"*
+
+Two-layer verification: `oc get runtimeclass kata` confirms the API object. Then `oc debug node/<kata-node>` and `chroot /host crictl info | grep kata` confirms the handler is registered in containerd's runtime registry. Both must pass before you trust that a Kata pod will run.
+
+*"A customer's Kata pod gets a Forbidden error. What do I check?"*
+
+Run `oc describe pod <name>` and look for the SCC message in events. Then `oc adm policy who-can use scc kata-scc` confirms which accounts have the grant. The fix is `oc adm policy add-scc-to-user kata-scc -z <serviceaccount> -n <namespace>`. Recommend a dedicated service account over granting to `default`.
+
+*"Is rebooting nodes acceptable in a production ARO HCP cluster?"*
+
+Yes — the MCO performs a rolling reboot, one node at a time, with cordon and drain before each reboot. Workloads are rescheduled before the node goes down. The kata-nodepool has a NoSchedule taint, so only Kata workloads land there — those workloads are specifically designed for this node type and do not need to be migrated to other pools.
