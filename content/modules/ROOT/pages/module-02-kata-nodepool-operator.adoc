@@ -208,7 +208,7 @@ Each CRD represents a distinct capability:
 
 * **`RuntimeClass`** (created by the operator, not a CRD) — registers the `kata` handler with containerd. After KataConfig completes, a RuntimeClass named `kata` appears in the cluster. Pods that set `runtimeClassName: kata` in their spec use the Kata VM runtime instead of runc. No other change to the pod spec is required.
 
-* **`peerpodsconfigs.confidentialcontainers.org`** — configures PeerPod mode. In PeerPod mode, each pod runs in a separate cloud provider VM rather than a nested VM on the worker node. This enables Kata-style isolation on VM SKUs that do not support nested virtualization, at the cost of longer pod start times. PeerPod mode is not covered in this lab.
+* **`peerpods.confidentialcontainers.org`** — configures PeerPod mode. In PeerPod mode, each pod runs in a separate cloud provider VM rather than a nested VM on the worker node. This enables Kata-style isolation on VM SKUs that do not support nested virtualization, at the cost of longer pod start times. PeerPod mode is not covered in this lab.
 
 === Examine the Installed CSV
 
