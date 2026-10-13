@@ -238,6 +238,8 @@
       - 409
 
 # Step 12: Register external auth
+# ARO HCP has a bug where NoPrefix breaks OIDC client reconciliation.
+# Using Prefix with an explicit prefix works around it.
 - name: Register Keycloak as ARO HCP external auth
   ansible.builtin.command: >-
     az aro hcp cluster external-auth create
@@ -247,7 +249,8 @@
     --issuer-url "{{ _keycloak_url }}/realms/{{ aro_hcp_keycloak_realm }}"
     --issuer-audience "{{ aro_hcp_keycloak_console_client_id }}"
     --username-claim preferred_username
-    --username-prefix-policy NoPrefix
+    --username-prefix-policy Prefix
+    --username-prefix "{{ aro_hcp_keycloak_username_prefix }}"
     --clients "[{client-id:{{ aro_hcp_keycloak_console_client_id }},component:{name:console,auth-client-namespace:openshift-console},type:Confidential}]"
   register: r_external_auth
   changed_when: true
@@ -282,7 +285,9 @@
         clientSecret: "{{ _console_client_secret }}"
 
 - name: Grant cluster-admin to Keycloak admin user
-  ansible.builtin.command: oc adm policy add-cluster-role-to-user cluster-admin admin
+  ansible.builtin.command: >-
+    oc adm policy add-cluster-role-to-user cluster-admin
+    "{{ aro_hcp_keycloak_username_prefix }}{{ aro_hcp_keycloak_admin_user }}"
   environment:
     KUBECONFIG: "{{ aro_hcp_keycloak_kubeconfig }}"
   register: r_cluster_admin
