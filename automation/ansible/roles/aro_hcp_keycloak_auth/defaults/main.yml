@@ -16,6 +16,9 @@ aro_hcp_keycloak_console_client_id: openshift-console
 aro_hcp_keycloak_admin_user: admin
 aro_hcp_keycloak_admin_password: REPLACE_ME
 
+# External auth username prefix (NoPrefix has a platform bug — use Prefix)
+aro_hcp_keycloak_username_prefix: "keycloak:"
+
 # OCP version for oc CLI download
 aro_hcp_keycloak_oc_version: "4.22"
 
