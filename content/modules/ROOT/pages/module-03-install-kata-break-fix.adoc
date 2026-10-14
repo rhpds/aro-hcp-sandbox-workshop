@@ -34,6 +34,64 @@ oc get nodes -l node-role.kubernetes.io/kata= \
 
 Both `Standard_D4s_v5` nodes should appear. If this returns nothing, the label from Module 2 was not applied correctly — stop and re-apply it before continuing.
 
+=== Configure ACR Registry Credentials
+
+The Sandboxed Containers Operator reads the OpenShift release image manifest to locate the Kata extension payload. In ARO HCP, release images are mirrored to a private Azure Container Registry (`arohcpocpprod.azurecr.io`). The operator's internal HTTP client reads credentials from the filesystem — not from Kubernetes pull secrets — so those credentials must be explicitly mounted into the operator pod before KataConfig will work.
+
+. Extract the ACR credentials from the cluster pull secret and create a Docker config secret in the operator namespace:
++
+[source,bash,role=execute]
+----
+oc get secret pull-secret -n openshift-config \
+  -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | \
+  jq '{"auths": {"arohcpocpprod.azurecr.io": .auths["arohcpocpprod.azurecr.io"]}}' \
+  > /tmp/acr-config.json
+
+oc create secret generic acr-docker-config \
+  --from-file=config.json=/tmp/acr-config.json \
+  -n openshift-sandboxed-containers-operator \
+  --dry-run=client -o yaml | oc apply -f -
+----
+
+. Capture the controller-manager container name and patch the deployment to mount the credentials:
++
+[source,bash,role=execute]
+----
+CONTAINER=$(oc get deployment controller-manager \
+  -n openshift-sandboxed-containers-operator \
+  -o jsonpath='{.spec.template.spec.containers[0].name}')
+
+oc patch deployment controller-manager \
+  -n openshift-sandboxed-containers-operator \
+  --type=strategic -p "{
+  \"spec\": {
+    \"template\": {
+      \"spec\": {
+        \"volumes\": [{\"name\": \"acr-docker-config\", \"secret\": {\"secretName\": \"acr-docker-config\"}}],
+        \"containers\": [{
+          \"name\": \"${CONTAINER}\",
+          \"env\": [{\"name\": \"DOCKER_CONFIG\", \"value\": \"/tmp/docker-cfg\"}],
+          \"volumeMounts\": [{\"name\": \"acr-docker-config\", \"mountPath\": \"/tmp/docker-cfg\", \"readOnly\": true}]
+        }]
+      }
+    }
+  }
+}"
+----
+
+. Wait for the operator to roll out with the new credentials:
++
+[source,bash,role=execute]
+----
+oc rollout status deployment/controller-manager \
+  -n openshift-sandboxed-containers-operator
+----
+
+[NOTE]
+====
+This step is specific to ARO HCP. The cluster's release images are mirrored to a private ACR that uses managed identity authentication at the node level. The operator's Go HTTP client cannot use managed identity — it reads credentials from `$DOCKER_CONFIG/config.json` on disk. Mounting the pull secret at that path gives the operator the Bearer token it needs to inspect the release image manifest and locate the Kata extension payload.
+====
+
 === Apply KataConfig
 
 . Apply the KataConfig resource, setting the `kataConfigPoolSelector` to match `node-role.kubernetes.io/kata`:
@@ -123,6 +181,49 @@ Each Kata node will transition through:
 ====
 ARO HCP does not expose the `machineconfigpool` API — that resource belongs to the MachineConfig Operator (MCO) in self-managed OpenShift. In ARO HCP, node-level configuration is managed internally by the service. The KataConfig status columns (`INPROGRESS`, `COMPLETED`, `TOTAL`) are the authoritative progress indicator for Kata installation on ARO HCP.
 ====
+
+=== While You Wait — Observe the Installation Internals
+
+Each node reboot takes 5–8 minutes. Use this time to make the installation visible rather than waiting passively.
+
+==== Watch the Operator DaemonSet
+
+The Sandboxed Containers Operator creates a DaemonSet to push Kata binaries onto each matching node. Watch it come up:
+
+[source,bash,role=execute]
+----
+oc get daemonset -n openshift-sandboxed-containers-operator -w
+----
+
+The DaemonSet rolls one pod per Kata node. Each pod handles the binary installation on its node and exits when done. This is how the operator delegates node-level work without needing direct host access.
+
+==== Stream the Operator Logs
+
+The controller-manager logs every step of the rollout:
+
+[source,bash,role=execute]
+----
+oc logs deployment/controller-manager \
+  -n openshift-sandboxed-containers-operator -f \
+  | grep -iE "kata|node|install|daemon"
+----
+
+You will see the operator detecting the KataConfig, creating the DaemonSet, and tracking node progress. Press `Ctrl+C` when you are done observing.
+
+==== Inspect the Node Before Kata Is Installed
+
+Open a debug shell on a Kata node while it is still waiting to be processed. Capture the containerd runtime list — you will compare this to the same output in Section 3 after installation completes:
+
+[source,bash,role=execute]
+----
+KATA_NODE=$(oc get nodes -l node-role.kubernetes.io/kata= \
+  -o jsonpath='{.items[0].metadata.name}')
+
+oc debug node/$KATA_NODE -- chroot /host \
+  crictl info | grep -A 3 runtimes
+----
+
+The `kata` handler is absent. After Section 3's verification step, the same command will show the kata handler registered — making the before/after change concrete.
 
 == Section 3 — Verify Kata Installation
 

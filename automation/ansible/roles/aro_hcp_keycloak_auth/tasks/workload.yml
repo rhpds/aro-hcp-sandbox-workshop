@@ -238,22 +238,61 @@
       - 409
 
 # Step 12: Register external auth
-# ARO HCP has a bug where NoPrefix breaks OIDC client reconciliation.
-# Using Prefix with an explicit prefix works around it.
+# ARO HCP has a bug where NoPrefix/None breaks OIDC client reconciliation — use Prefix.
+# --clients uses Azure CLI shorthand syntax; single-quoted to prevent brace interpretation.
 - name: Register Keycloak as ARO HCP external auth
-  ansible.builtin.command: >-
-    az aro hcp cluster external-auth create
-    --resource-group "{{ aro_hcp_keycloak_cluster_rg }}"
-    --cluster-name "{{ aro_hcp_keycloak_cluster_name }}"
-    --name keycloak
-    --issuer-url "{{ _keycloak_url }}/realms/{{ aro_hcp_keycloak_realm }}"
-    --issuer-audience "{{ aro_hcp_keycloak_console_client_id }}"
-    --username-claim preferred_username
-    --username-prefix-policy Prefix
-    --username-prefix "{{ aro_hcp_keycloak_username_prefix }}"
-    --clients "[{client-id:{{ aro_hcp_keycloak_console_client_id }},component:{name:console,auth-client-namespace:openshift-console},type:Confidential}]"
+  ansible.builtin.shell: |
+    az aro hcp cluster external-auth create \
+      --resource-group "{{ aro_hcp_keycloak_cluster_rg }}" \
+      --cluster-name "{{ aro_hcp_keycloak_cluster_name }}" \
+      --name keycloak \
+      --issuer-url "{{ _keycloak_url }}/realms/{{ aro_hcp_keycloak_realm }}" \
+      --issuer-audience "{{ aro_hcp_keycloak_console_client_id }}" \
+      --username-claim preferred_username \
+      --username-prefix-policy Prefix \
+      --username-prefix "{{ aro_hcp_keycloak_username_prefix }}" \
+      --clients '[{client-id:{{ aro_hcp_keycloak_console_client_id }},component:{name:console,auth-client-namespace:openshift-console},type:Confidential}]'
   register: r_external_auth
   changed_when: true
+
+- name: Verify external auth clients were registered
+  ansible.builtin.shell: |
+    az aro hcp cluster external-auth show \
+      --resource-group "{{ aro_hcp_keycloak_cluster_rg }}" \
+      --cluster-name "{{ aro_hcp_keycloak_cluster_name }}" \
+      --name keycloak \
+      --output json
+  register: r_external_auth_show
+  changed_when: false
+
+- name: Fail if external auth clients are missing
+  ansible.builtin.fail:
+    msg: >-
+      External auth was registered but clients list is empty. This is a known ARO HCP
+      preview bug where the --clients argument is silently dropped. Delete the external
+      auth (az aro hcp cluster external-auth delete ...) and re-run.
+  when: (r_external_auth_show.stdout | from_json).properties.clients | length == 0
+
+- name: Wait for HyperShift to propagate OIDC config to Authentication resource
+  ansible.builtin.shell: |
+    oc get authentication.config.openshift.io cluster \
+      -o jsonpath='{.spec.oidcProviders}' \
+      --kubeconfig "{{ aro_hcp_keycloak_kubeconfig }}"
+  register: r_oidc_propagated
+  until: r_oidc_propagated.stdout != "" and r_oidc_propagated.stdout != "null"
+  retries: 30
+  delay: 30
+  changed_when: false
+  failed_when: false
+
+- name: Warn if OIDC config did not propagate
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: HyperShift did not propagate the OIDC config to Authentication.spec.oidcProviders
+      within 15 minutes. This is a known ARO HCP preview limitation. The console will show
+      'no authentication method configured' until propagation occurs. Console auth may need
+      to be configured manually or may resolve after cluster reconciliation.
+  when: r_oidc_propagated.stdout == "" or r_oidc_propagated.stdout == "null"
 
 # Step 13: Console secrets and RBAC
 - name: Create console-oauth-config secret
