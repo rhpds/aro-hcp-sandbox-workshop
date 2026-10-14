@@ -92,6 +92,45 @@ oc rollout status deployment/controller-manager \
 This step is specific to ARO HCP. The cluster's release images are mirrored to a private ACR that uses managed identity authentication at the node level. The operator's Go HTTP client cannot use managed identity — it reads credentials from `$DOCKER_CONFIG/config.json` on disk. Mounting the pull secret at that path gives the operator the Bearer token it needs to inspect the release image manifest and locate the Kata extension payload.
 ====
 
+=== Prepare Kata Nodes for Installation
+
+Two steps are required before applying KataConfig in ARO HCP. In self-managed OpenShift, the MachineConfig Operator handles both automatically. In ARO HCP, the MCO is managed internally by the service and does not apply these changes to customer NodePools.
+
+==== Add the `kata-oc` node label
+
+The Sandboxed Containers Operator's install DaemonSet uses the node selector `node-role.kubernetes.io/kata-oc=`. This label is normally applied by the MCO when it processes a MachineConfigPool. In ARO HCP, it must be applied manually:
+
+[source,bash,role=execute]
+----
+oc label nodes -l node-role.kubernetes.io/kata= \
+  node-role.kubernetes.io/kata-oc=
+----
+
+Confirm the label is present on both Kata nodes:
+
+[source,bash,role=execute]
+----
+oc get nodes -l node-role.kubernetes.io/kata-oc= \
+  -o custom-columns=NAME:.metadata.name,ROLES:.metadata.labels."node-role\.kubernetes\.io/kata-oc"
+----
+
+Both Kata nodes should appear. If this returns nothing, the label was not applied — check that the Kata NodePool nodes have `node-role.kubernetes.io/kata=` first.
+
+==== Remove the `NoSchedule` taint temporarily
+
+The Kata NodePool was created with a `kata=true:NoSchedule` taint to prevent regular workloads from landing on Kata nodes. The `osc-rpm-install` DaemonSet does not include a toleration for this taint — it expects the MCO to have already configured the nodes before the taint is in effect. In ARO HCP, the taint must be removed during installation.
+
+[source,bash,role=execute]
+----
+oc adm taint nodes -l node-role.kubernetes.io/kata-oc= \
+  kata=true:NoSchedule-
+----
+
+[NOTE]
+====
+The trailing `-` removes the taint. This is safe — the Kata nodes only have Kata workloads, and no non-Kata workloads will be scheduled here during the brief installation window. The taint is re-added after installation completes in Section 2.
+====
+
 === Apply KataConfig
 
 . Apply the KataConfig resource, setting the `kataConfigPoolSelector` to match `node-role.kubernetes.io/kata`:
@@ -162,24 +201,26 @@ As the rollout proceeds, the columns populate:
 +
 Wait for `COMPLETED` to equal `TOTAL` before continuing to Section 3. Press `Ctrl+C` once complete.
 
-=== Terminal 2 — Watch the Kata Nodes
+=== Terminal 2 — Watch the Install DaemonSet
 
-. In a second terminal, watch the Kata nodes directly:
+. In a second terminal, watch the install pods come up on each Kata node:
 +
 [source,bash,role=execute]
 ----
-oc get nodes -l node-role.kubernetes.io/kata= -w
+oc get pods -n openshift-sandboxed-containers-operator \
+  -l name=osc-rpm-install -w
 ----
 +
-Each Kata node will transition through:
+The operator creates one pod per Kata node. Each pod installs the kata-containers RPM packages directly onto the node and exits when done:
 +
-* `Ready,SchedulingDisabled` — node cordoned, no new pods will be scheduled
-* `NotReady,SchedulingDisabled` — node rebooting to apply the new configuration
-* `Ready` — node returned to service with Kata binaries installed
+* `ContainerCreating` → `Running` — pod started, RPM installation in progress
+* `Completed` — RPM installation finished, node ready for kata workloads
++
+In ARO HCP, Kata nodes **do not reboot** during installation. The DaemonSet installs binaries in place using an overlay filesystem. This is different from self-managed OpenShift where the MCO triggers a full node reboot to apply a MachineConfig.
 
 [NOTE]
 ====
-ARO HCP does not expose the `machineconfigpool` API — that resource belongs to the MachineConfig Operator (MCO) in self-managed OpenShift. In ARO HCP, node-level configuration is managed internally by the service. The KataConfig status columns (`INPROGRESS`, `COMPLETED`, `TOTAL`) are the authoritative progress indicator for Kata installation on ARO HCP.
+ARO HCP does not expose the `machineconfigpool` API. In self-managed OpenShift, the MCO applies a MachineConfig that triggers a rolling node reboot — you would see nodes cycle through `Ready,SchedulingDisabled → NotReady,SchedulingDisabled → Ready`. That sequence does not occur in ARO HCP. The KataConfig status columns (`INPROGRESS`, `COMPLETED`, `TOTAL`) are the authoritative progress indicator here.
 ====
 
 === While You Wait — Observe the Installation Internals
@@ -224,6 +265,26 @@ oc debug node/$KATA_NODE -- chroot /host \
 ----
 
 The `kata` handler is absent. After Section 3's verification step, the same command will show the kata handler registered — making the before/after change concrete.
+
+=== Re-add the `NoSchedule` Taint
+
+Once `COMPLETED` equals `TOTAL`, re-add the taint to restore workload isolation on the Kata nodes:
+
+[source,bash,role=execute]
+----
+oc adm taint nodes -l node-role.kubernetes.io/kata-oc= \
+  kata=true:NoSchedule
+----
+
+Confirm the taint is back:
+
+[source,bash,role=execute]
+----
+oc get nodes -l node-role.kubernetes.io/kata-oc= \
+  -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+----
+
+Both nodes should show `[map[effect:NoSchedule key:kata value:true]]`. Kata pods with the correct toleration will still schedule here — all other workloads are blocked.
 
 == Section 3 — Verify Kata Installation
 
