@@ -6,7 +6,7 @@ Installing the Sandboxed Containers Operator is necessary but not sufficient. Th
 
 This module closes the installation loop. You apply KataConfig with careful attention to the selector, watch the DaemonSet install Kata binaries onto each node in real time, and verify the result at two layers: the cluster-level `kata` RuntimeClass and the containerd runtime registry on the node itself.
 
-Then you deliberately break it. The most common Sandboxed Containers admission failure seen in the field is a `Forbidden` error caused by missing SCC configuration. You reproduce it, trace it with `oc describe` and `oc adm policy who-can`, and fix it. The module closes with a discussion of production-appropriate SCC assignment strategy.
+Then you deliberately break it. A kata pod without the correct node toleration stays `Pending` forever — the scheduler cannot place it on any node. You reproduce it, trace the `FailedScheduling` event with `oc describe`, and fix it by adding the missing toleration. The module closes with a discussion of production-appropriate toleration strategy.
 
 == Learning Objectives
 
@@ -15,8 +15,8 @@ By the end of this module you will be able to:
 * Configure KataConfig with a `kataConfigPoolSelector` that correctly matches the Kata NodePool node label from Module 2
 * Observe the DaemonSet-based installation as it installs Kata binaries onto each node without rebooting
 * Verify Kata installation at two layers: the `kata` RuntimeClass in the cluster and the kata handler in containerd's runtime registry
-* Reproduce and trace the most common Kata admission failure using pod events and `oc adm policy who-can`
-* Fix the admission failure by granting the Kata SCC to the service account
+* Reproduce and trace a Kata scheduling failure caused by a missing node toleration
+* Fix the scheduling failure by adding the correct toleration to the pod spec
 
 == Section 1 — Apply KataConfig
 
@@ -342,11 +342,13 @@ The `kata` handler should appear in the `runtimes` section of the containerd con
 exit
 ----
 
-== Section 4 — Break It: Trigger the Admission Failure
+== Section 4 — Break It: Trigger the Scheduling Failure
 
-The most common Kata deployment error seen in the field is not a configuration error — it is an admission error. Pods requesting the `kata` runtime require elevated privileges to create the nested VM. Without the correct SCC grant, OpenShift's admission controller blocks the pod before it is ever scheduled.
+The Kata NodePool has a `kata=true:NoSchedule` taint — the same taint you added in Module 2 to prevent regular workloads from landing on these nodes. Any pod that requests the `kata` RuntimeClass must also declare a toleration for that taint. Without it, the scheduler cannot place the pod on any node and it remains `Pending` indefinitely.
 
-=== Deploy a Kata Pod Without SCC
+This is a realistic field failure. The RuntimeClass exists, KataConfig completed, the node is Ready — everything looks correct — but the pod never starts.
+
+=== Deploy a Kata Pod Without a Toleration
 
 . Create a namespace for the test:
 +
@@ -355,7 +357,7 @@ The most common Kata deployment error seen in the field is not a configuration e
 oc new-project kata-test
 ----
 
-. Attempt to deploy a Kata pod without any SCC configuration:
+. Deploy a Kata pod that is missing the node toleration:
 +
 [source,bash,role=execute]
 ----
@@ -367,10 +369,6 @@ metadata:
   namespace: kata-test
 spec:
   runtimeClassName: kata
-  tolerations:
-  - key: kata
-    value: "true"
-    effect: NoSchedule
   containers:
   - name: ubi
     image: registry.access.redhat.com/ubi9/ubi-minimal
@@ -378,7 +376,7 @@ spec:
 EOF
 ----
 
-. Observe that the pod does not start:
+. Observe that the pod stays `Pending`:
 +
 [source,bash,role=execute]
 ----
@@ -387,45 +385,43 @@ oc get pod kata-test-pod -n kata-test
 
 === Trace the Failure
 
-. Examine the pod events to locate the admission error:
+. Examine the pod events to find the scheduling message:
 +
 [source,bash,role=execute]
 ----
-oc describe pod kata-test-pod -n kata-test | grep -A 10 Events
+oc describe pod kata-test-pod -n kata-test | grep -A 5 Events
 ----
 +
-The events section will contain a `Forbidden` message referencing the SCC policy. The pod was blocked at admission — it never reached the scheduler.
-
-. Identify which service accounts currently have permission to use the Kata SCC:
+The events section will contain a `FailedScheduling` message similar to:
 +
-[source,bash,role=execute]
 ----
-oc adm policy who-can use scc kata-scc
+Warning  FailedScheduling  ...  0/4 nodes are available: 2 node(s) had
+untolerated taint {kata: true}: value true, effect NoSchedule, 2 node(s)
+didn't match Pod's node affinity/selector.
 ----
 +
-The `default` service account in the `kata-test` namespace is not listed. The pod is running as `default` — it does not have the required SCC grant.
+The two regular worker nodes are excluded by the RuntimeClass node affinity (they have no kata handler). The two Kata nodes are excluded because the pod has no toleration for `kata=true:NoSchedule`. No valid node exists — the pod is stuck.
 
 [NOTE]
 ====
-This is the field failure pattern: the operator is installed, KataConfig is applied, the RuntimeClass exists — everything looks correct — but pods fail at admission. The `Forbidden` event and `oc adm policy who-can` are the two tools that immediately surface the root cause.
+The `kata` RuntimeClass automatically injects a node affinity that requires `node-role.kubernetes.io/kata-oc=` — this is how OpenShift ensures kata pods only schedule on nodes where the kata handler is installed. Combined with the `NoSchedule` taint, kata pods must carry both the correct `runtimeClassName` and the matching toleration to land on a kata node.
 ====
 
-== Section 5 — Fix It: Grant the SCC
+== Section 5 — Fix It: Add the Toleration
 
-=== Grant the SCC to the Service Account
+=== Add the Missing Toleration
 
-. Grant the Kata SCC to the `default` service account in the `kata-test` namespace:
-+
-[source,bash,role=execute]
-----
-oc adm policy add-scc-to-user kata-scc -z default -n kata-test
-----
-
-. Delete and re-apply the pod so it is evaluated under the new SCC grant:
+. Delete the failing pod:
 +
 [source,bash,role=execute]
 ----
 oc delete pod kata-test-pod -n kata-test
+----
+
+. Re-apply the pod with the correct toleration:
++
+[source,bash,role=execute]
+----
 oc apply -f - <<'EOF'
 apiVersion: v1
 kind: Pod
@@ -454,17 +450,17 @@ oc get pod kata-test-pod -n kata-test -w
 +
 Wait for `STATUS` to show `Running`, then press `Ctrl+C`.
 
-=== Production Consideration: SCC Assignment Strategy
+. Confirm the pod landed on a Kata node:
++
+[source,bash,role=execute]
+----
+oc get pod kata-test-pod -n kata-test \
+  -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,RUNTIME:.spec.runtimeClassName
+----
 
-The fix above grants the `kata-scc` to the `default` service account. This works, but it means every pod in the `kata-test` namespace running as `default` now has Kata SCC privileges — including workloads that are not Kata pods.
+=== Production Consideration: Toleration Strategy
 
-For production environments:
-
-* Create a dedicated service account for Kata workloads: `oc create serviceaccount kata-workloads -n <namespace>`
-* Grant the SCC to that account only: `oc adm policy add-scc-to-user kata-scc -z kata-workloads -n <namespace>`
-* Set `serviceAccountName: kata-workloads` in each Kata pod spec
-
-This scopes the privilege grant precisely to workloads that require it, following the principle of least privilege. The `default` service account retains no Kata SCC grant.
+Every kata workload in your cluster must carry the `kata=true:NoSchedule` toleration. The recommended approach is to embed this in a pod template at the Deployment or StatefulSet level rather than setting it pod by pod. Teams adopting Kata as a runtime standard can enforce toleration presence through an admission webhook or OPA policy — ensuring no kata workload accidentally loses the toleration during a manifest update.
 
 == Summary
 
@@ -473,8 +469,8 @@ This scopes the privilege grant precisely to workloads that require it, followin
 * **The `kataConfigPoolSelector` is the most common Kata misconfiguration.** A label mismatch causes zero nodes to be configured with no error output. Verify with `oc get nodes -l node-role.kubernetes.io/kata=` before applying KataConfig.
 * **KataConfig tracks the rollout through status columns.** In ARO HCP, the `machineconfigpool` API is not exposed. Progress is visible in the `INPROGRESS`, `COMPLETED`, and `TOTAL` columns of `oc get kataconfig`. The DaemonSet installs Kata binaries in place — nodes do not reboot.
 * **Kata installation requires two-layer verification.** The `kata` RuntimeClass in the cluster proves the API is registered. The kata handler in the containerd runtime registry on the node proves the binary is installed. Both must be present for Kata pods to run.
-* **The most common field admission failure is a missing SCC grant.** The pod is blocked at admission with a `Forbidden` event. `oc adm policy who-can use scc kata-scc` immediately surfaces which accounts have the grant — and confirms the one that does not.
-* **SCC grants should follow least privilege.** Granting to the `default` service account is expedient but broad. A dedicated service account scoped to Kata workloads is the production-appropriate pattern.
+* **Kata pods require a toleration for the `kata=true:NoSchedule` taint.** Without it, the pod stays `Pending` indefinitely — the RuntimeClass node affinity routes it to Kata nodes, but the taint blocks scheduling. The `FailedScheduling` event names the untolerated taint directly.
+* **Tolerations belong in the workload template, not as a one-off fix.** Embed the toleration at the Deployment or StatefulSet level so it survives manifest updates. Enforce it cluster-wide with an admission webhook or OPA policy for teams running Kata at scale.
 
 === Key Takeaways for Customer Conversations
 
@@ -486,9 +482,9 @@ Check the `kataConfigPoolSelector` first. Run `oc get nodes -l node-role.kuberne
 
 Two-layer verification: `oc get runtimeclass kata` confirms the API object. Then `oc debug node/<kata-node>` and `chroot /host crictl info | grep kata` confirms the handler is registered in containerd's runtime registry. Both must pass before you trust that a Kata pod will run.
 
-*"A customer's Kata pod gets a Forbidden error. What do I check?"*
+*"A customer's Kata pod is stuck in Pending. What do I check?"*
 
-Run `oc describe pod <name>` and look for the SCC message in events. Then `oc adm policy who-can use scc kata-scc` confirms which accounts have the grant. The fix is `oc adm policy add-scc-to-user kata-scc -z <serviceaccount> -n <namespace>`. Recommend a dedicated service account over granting to `default`.
+Run `oc describe pod <name>` and look at the `Events` section. A `FailedScheduling` event with "untolerated taint {kata: true}" means the pod is missing `tolerations: [{key: kata, value: true, effect: NoSchedule}]`. Add it to the pod spec and re-apply. If the taint message is absent, check that the `runtimeClassName: kata` is set — without it the pod won't target kata nodes at all.
 
 *"Does Kata installation disrupt my cluster in ARO HCP?"*
 
