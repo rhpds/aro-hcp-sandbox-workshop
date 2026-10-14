@@ -4,7 +4,7 @@
 
 Installing the Sandboxed Containers Operator is necessary but not sufficient. The Kata runtime does not activate until a `KataConfig` resource tells the operator which nodes to configure. That configuration step is deceptively easy to get wrong: a single label mismatch between the `kataConfigPoolSelector` in KataConfig and the label applied to the Kata NodePool in Module 2 causes the operator to proceed silently — no error, no warning, zero nodes configured.
 
-This module closes the installation loop. You apply KataConfig with careful attention to the selector, watch the MachineConfigPool update cycle in real time, and verify the result at two layers: the cluster-level `kata` RuntimeClass and the containerd runtime registry on the node itself.
+This module closes the installation loop. You apply KataConfig with careful attention to the selector, watch the DaemonSet install Kata binaries onto each node in real time, and verify the result at two layers: the cluster-level `kata` RuntimeClass and the containerd runtime registry on the node itself.
 
 Then you deliberately break it. The most common Sandboxed Containers admission failure seen in the field is a `Forbidden` error caused by missing SCC configuration. You reproduce it, trace it with `oc describe` and `oc adm policy who-can`, and fix it. The module closes with a discussion of production-appropriate SCC assignment strategy.
 
@@ -13,7 +13,7 @@ Then you deliberately break it. The most common Sandboxed Containers admission f
 By the end of this module you will be able to:
 
 * Configure KataConfig with a `kataConfigPoolSelector` that correctly matches the Kata NodePool node label from Module 2
-* Observe the MachineConfigPool update cycle as nodes cordon, drain, reboot, and return to Ready state
+* Observe the DaemonSet-based installation as it installs Kata binaries onto each node without rebooting
 * Verify Kata installation at two layers: the `kata` RuntimeClass in the cluster and the kata handler in containerd's runtime registry
 * Reproduce and trace the most common Kata admission failure using pod events and `oc adm policy who-can`
 * Fix the admission failure by granting the Kata SCC to the service account
@@ -163,13 +163,13 @@ NAME                 INPROGRESS   COMPLETED   TOTAL   AGE
 example-kataconfig                                    Xm
 ----
 +
-The three status columns track the MCO rollout as it runs:
+The three status columns track the DaemonSet rollout as it runs:
 +
-* `INPROGRESS` — number of nodes currently being processed (cordoned, draining, or rebooting)
-* `COMPLETED` — number of nodes that have finished installing Kata binaries and returned to Ready
+* `INPROGRESS` — nodes currently being processed by the install DaemonSet
+* `COMPLETED` — nodes that have finished installing Kata binaries
 * `TOTAL` — total number of nodes targeted by the `kataConfigPoolSelector`
 +
-All three are empty immediately after creation. They populate once the MCO begins cordoning the first node. If `TOTAL` remains empty after several minutes, the `kataConfigPoolSelector` matched zero nodes — verify the label with `oc get nodes -l node-role.kubernetes.io/kata=`.
+All three are empty immediately after creation. They populate once the DaemonSet pods begin running on each node. If `TOTAL` remains empty after several minutes, the `kataConfigPoolSelector` matched zero nodes — verify the label with `oc get nodes -l node-role.kubernetes.io/kata=`.
 
 [NOTE]
 ====
@@ -178,11 +178,11 @@ The `kataConfigPoolSelector` value `node-role.kubernetes.io/kata: ""` must be an
 
 == Section 2 — Watch the Kata Installation Rollout
 
-When KataConfig is applied, the Sandboxed Containers Operator installs Kata binaries onto each matching node in sequence: cordoning the node, draining workloads, rebooting, and returning the node to Ready state.
+When KataConfig is applied, the Sandboxed Containers Operator creates the `osc-rpm-install` DaemonSet, which runs one pod per matching node. Each pod installs the kata-containers RPM packages directly onto the node and exits. Nodes do not reboot.
 
-In ARO HCP, the MachineConfigPool API is not exposed to the customer — node configuration is managed internally by the service. Progress is tracked instead through the KataConfig status columns and the node state directly.
+In ARO HCP, the MachineConfigPool API is not exposed — node configuration is managed internally by the service. Progress is tracked through the KataConfig status columns and the DaemonSet pod state.
 
-This cycle typically takes several minutes per node. Use two terminals to observe it in parallel.
+Installation typically takes 3–5 minutes per node. Use two terminals to observe it in parallel.
 
 === Terminal 1 — Watch the KataConfig Status
 
@@ -225,7 +225,7 @@ ARO HCP does not expose the `machineconfigpool` API. In self-managed OpenShift, 
 
 === While You Wait — Observe the Installation Internals
 
-Each node reboot takes 5–8 minutes. Use this time to make the installation visible rather than waiting passively.
+Installation runs in the background while you watch. Use this time to make it visible rather than waiting passively.
 
 ==== Watch the Operator DaemonSet
 
@@ -306,7 +306,7 @@ NAME   HANDLER   AGE
 kata   kata      Xm
 ----
 +
-The `HANDLER` value `kata` tells containerd which runtime binary to call when a pod requests this class. If this resource is absent, the MachineConfigPool rollout did not complete or the `kataConfigPoolSelector` matched zero nodes.
+The `HANDLER` value `kata` tells containerd which runtime binary to call when a pod requests this class. If this resource is absent, the DaemonSet installation did not complete or the `kataConfigPoolSelector` matched zero nodes.
 
 === Layer 2 — Node: containerd Runtime Registry
 
@@ -333,7 +333,7 @@ oc debug node/$KATA_NODE
 chroot /host crictl info | grep -A 5 kata
 ----
 +
-The `kata` handler should appear in the `runtimes` section of the containerd configuration. If it is absent, the MachineConfig did not apply correctly on this node — check `oc get machineconfigpool kata` and look for degraded conditions.
+The `kata` handler should appear in the `runtimes` section of the containerd configuration. If it is absent, the DaemonSet installation did not complete on this node — check `oc get kataconfig -o yaml` and look for the node listed under `status.kataNodes.failed`.
 
 . Exit the debug shell:
 +
@@ -471,7 +471,7 @@ This scopes the privilege grant precisely to workloads that require it, followin
 === What You Learned
 
 * **The `kataConfigPoolSelector` is the most common Kata misconfiguration.** A label mismatch causes zero nodes to be configured with no error output. Verify with `oc get nodes -l node-role.kubernetes.io/kata=` before applying KataConfig.
-* **KataConfig tracks the rollout through status columns.** In ARO HCP, the `machineconfigpool` API is not exposed. Progress is visible in the `INPROGRESS`, `COMPLETED`, and `TOTAL` columns of `oc get kataconfig`. Each Kata node cordons, drains, reboots, and returns Ready as Kata binaries are installed.
+* **KataConfig tracks the rollout through status columns.** In ARO HCP, the `machineconfigpool` API is not exposed. Progress is visible in the `INPROGRESS`, `COMPLETED`, and `TOTAL` columns of `oc get kataconfig`. The DaemonSet installs Kata binaries in place — nodes do not reboot.
 * **Kata installation requires two-layer verification.** The `kata` RuntimeClass in the cluster proves the API is registered. The kata handler in the containerd runtime registry on the node proves the binary is installed. Both must be present for Kata pods to run.
 * **The most common field admission failure is a missing SCC grant.** The pod is blocked at admission with a `Forbidden` event. `oc adm policy who-can use scc kata-scc` immediately surfaces which accounts have the grant — and confirms the one that does not.
 * **SCC grants should follow least privilege.** Granting to the `default` service account is expedient but broad. A dedicated service account scoped to Kata workloads is the production-appropriate pattern.
@@ -490,6 +490,6 @@ Two-layer verification: `oc get runtimeclass kata` confirms the API object. Then
 
 Run `oc describe pod <name>` and look for the SCC message in events. Then `oc adm policy who-can use scc kata-scc` confirms which accounts have the grant. The fix is `oc adm policy add-scc-to-user kata-scc -z <serviceaccount> -n <namespace>`. Recommend a dedicated service account over granting to `default`.
 
-*"Is rebooting nodes acceptable in a production ARO HCP cluster?"*
+*"Does Kata installation disrupt my cluster in ARO HCP?"*
 
-Yes — Kata installation performs a rolling reboot, one node at a time, with cordon and drain before each reboot. Workloads are rescheduled before the node goes down. The kata-nodepool has a NoSchedule taint, so only Kata workloads land there — those workloads are specifically designed for this node type and do not need to be migrated to other pools.
+No. In ARO HCP, Kata installation does not reboot nodes. The `osc-rpm-install` DaemonSet installs the kata-containers packages in place on each node. Nodes remain `Ready` throughout. The only preparation required is temporarily removing the `kata=true:NoSchedule` taint during installation, which is safe since no non-Kata workloads are targeting those nodes.
