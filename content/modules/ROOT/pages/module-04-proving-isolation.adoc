@@ -43,7 +43,7 @@ uname -r
 ----
 oc run runc-kernel --image=registry.access.redhat.com/ubi9/ubi-minimal \
   --restart=Never -- uname -r
-oc logs runc-kernel
+oc logs runc-kernel --follow
 ----
 
 . Run a kata pod and print its kernel version:
@@ -60,7 +60,7 @@ oc run kata-kernel \
       "containers": [{"name":"kata-kernel","image":"registry.access.redhat.com/ubi9/ubi-minimal","command":["uname","-r"]}]
     }
   }'
-oc logs kata-kernel
+oc logs kata-kernel --follow
 ----
 +
 All three outputs are identical. The isolation proof is not here — it is in the process namespace.
