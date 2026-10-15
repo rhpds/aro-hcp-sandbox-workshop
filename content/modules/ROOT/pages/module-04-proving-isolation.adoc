@@ -165,23 +165,40 @@ oc exec kata-probe -n kata-test -- \
 +
 The runc probe will show hundreds of PIDs — it is looking into the host's PID namespace, where every container process on the node is visible. The kata probe will show a handful — it can only see the processes inside its own guest VM, regardless of the `hostPID: true` flag.
 
-. Confirm what PID 1 is in each pod:
+. Confirm what PID 1 is in the runc probe:
 +
 [source,bash,role=execute]
 ----
-oc exec runc-probe -n kata-test -- cat /proc/1/cmdline | tr '\0' ' '
-echo
-oc exec kata-probe -n kata-test -- cat /proc/1/cmdline | tr '\0' ' '
+oc exec runc-probe -n kata-test -- cat /proc/1/cmdline | tr '\0' '\n'
 ----
 +
 Expected output:
 +
 ----
-/usr/lib/systemd/systemd --switched-root --system --deserialize 27
-/usr/bin/sleep infinity
+/usr/lib/systemd/systemd
+--switched-root
+--system
+--deserialize
+27
+----
+
+. Confirm what PID 1 is in the kata probe:
++
+[source,bash,role=execute]
+----
+oc exec kata-probe -n kata-test -- cat /proc/1/cmdline | tr '\0' '\n'
 ----
 +
-The runc probe reports the **host's** PID 1 — `systemd`. The pod entered the host PID namespace and is looking at the node's own init process, not its own. The kata probe reports its own entrypoint — `sleep infinity`. It cannot see systemd at all. `hostPID: true` had no effect: the kata pod is fully contained inside its guest VM, and the host PID namespace is simply not reachable from there.
+Expected output:
++
+----
+/usr/bin/coreutils
+--coreutils-prog-shebang=sleep
+/usr/bin/sleep
+infinity
+----
++
+The runc probe reports the **host's** PID 1 — `systemd`. The pod entered the host PID namespace and is looking at the node's own init process, not the container's. The kata probe reports its own entrypoint — the `coreutils` multicall wrapper invoking `sleep infinity`. It cannot see systemd at all. `hostPID: true` had no effect: the kata pod is fully contained inside its guest VM, and the host PID namespace is simply not reachable from there.
 
 [NOTE]
 ====
