@@ -1,0 +1,343 @@
+= Proving Isolation: Kernel, Process, and Tenant Boundaries
+
+== Value Proposition
+
+The previous module installed Kata and proved the runtime exists. This module makes the isolation claim empirical.
+
+"Kernel-level isolation" is easy to say in a presentation — harder to demonstrate with live cluster output. You run three comparisons and read the raw results yourself: kernel version across the host, a runc pod, and a kata pod; process namespace visibility through `/proc` when explicitly requesting host PID access; and a cross-tenant inspection attempt between two kata workloads on the same node versus the same attempt with runc workloads.
+
+Each comparison produces output you can show a customer to answer the question: *how isolated is it, really?*
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Explain why kernel version is identical across the host, runc pods, and kata pods in Red Hat OpenShift Sandboxed Containers — and why that does not mean isolation is absent
+* Prove process namespace isolation by comparing `/proc` PID counts between runc and kata pods when `hostPID: true` is set
+* Demonstrate hard multi-tenancy: two kata pods on the same node cannot inspect each other's processes
+* Contrast with soft multi-tenancy: two runc pods with host PID namespace access can see each other's processes
+* Articulate the isolation model to a customer using empirical cluster output
+
+== Section 1 — Kernel Version Comparison
+
+=== Why the Version Is the Same
+
+In upstream Kata Containers, the guest VM runs a separate lightweight kernel (typically 5.4.x or 6.1.x) from the kata-containers project. In Red Hat OpenShift Sandboxed Containers, the operator builds the guest kernel image directly from the running RHCOS node during installation — the `Creating kata appliance initrd` step you saw in Module 3. The result: all three — host, runc pod, kata pod — report the same kernel version.
+
+This is by design. Red Hat's packaging approach avoids shipping a separate kernel binary, ensures the guest kernel stays in sync with RHCOS security patches automatically, and eliminates the maintenance overhead of a separate kernel lifecycle.
+
+The isolation is at the kernel *instance* level, not the version level. Each kata pod runs its own private execution of that kernel inside a KVM VM. The host kernel and other kata pods are unreachable — even though the version string is the same.
+
+=== Run the Comparison
+
+. Get the host kernel version from the bastion:
++
+[source,bash,role=execute]
+----
+uname -r
+----
+
+. Run a runc pod and print its kernel version:
++
+[source,bash,role=execute]
+----
+oc run runc-kernel --image=registry.access.redhat.com/ubi9/ubi-minimal \
+  --restart=Never -- uname -r
+oc logs runc-kernel
+----
+
+. Run a kata pod and print its kernel version:
++
+[source,bash,role=execute]
+----
+oc run kata-kernel \
+  --image=registry.access.redhat.com/ubi9/ubi-minimal \
+  --restart=Never \
+  --overrides='{
+    "spec": {
+      "runtimeClassName": "kata",
+      "tolerations": [{"key":"kata","value":"true","effect":"NoSchedule"}],
+      "containers": [{"name":"kata-kernel","image":"registry.access.redhat.com/ubi9/ubi-minimal","command":["uname","-r"]}]
+    }
+  }'
+oc logs kata-kernel
+----
++
+All three outputs are identical. The isolation proof is not here — it is in the process namespace.
+
+. Clean up:
++
+[source,bash,role=execute]
+----
+oc delete pod runc-kernel kata-kernel
+----
+
+== Section 2 — Process Namespace Isolation
+
+=== The Test
+
+With `hostPID: true`, a pod requests access to the host's PID namespace — meaning it should be able to see all processes running on the node, including those belonging to other containers.
+
+For a runc pod this works: the pod enters the host PID namespace and can enumerate all PIDs via `/proc`.
+
+For a kata pod this does not work: the pod is inside a KVM guest. `hostPID: true` is interpreted within the guest VM's kernel — the host PID namespace is simply not reachable from inside the VM. The kata guest sees only the processes running inside its own kernel instance.
+
+The PID count difference between the two is the empirical isolation proof.
+
+=== Deploy the Probe Pods
+
+. Deploy a runc probe with host PID access:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: runc-probe
+  namespace: kata-test
+spec:
+  hostPID: true
+  containers:
+  - name: probe
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sleep", "infinity"]
+    securityContext:
+      privileged: true
+EOF
+----
+
+. Deploy a kata probe with the same host PID request:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kata-probe
+  namespace: kata-test
+spec:
+  hostPID: true
+  runtimeClassName: kata
+  tolerations:
+  - key: kata
+    value: "true"
+    effect: NoSchedule
+  containers:
+  - name: probe
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sleep", "infinity"]
+    securityContext:
+      privileged: true
+EOF
+----
+
+. Wait for both pods to be Running:
++
+[source,bash,role=execute]
+----
+oc get pods -n kata-test -w
+----
++
+Press `Ctrl+C` when both show `Running`.
+
+=== Compare the Results
+
+. Count visible PIDs in the runc probe:
++
+[source,bash,role=execute]
+----
+oc exec runc-probe -n kata-test -- \
+  sh -c 'ls /proc | grep -E "^[0-9]+$" | wc -l'
+----
++
+. Count visible PIDs in the kata probe:
++
+[source,bash,role=execute]
+----
+oc exec kata-probe -n kata-test -- \
+  sh -c 'ls /proc | grep -E "^[0-9]+$" | wc -l'
+----
++
+The runc probe will show hundreds of PIDs — it is looking into the host's PID namespace, where every container process on the node is visible. The kata probe will show a handful — it can only see the processes inside its own guest VM, regardless of the `hostPID: true` flag.
+
+. Confirm what PID 1 is in each pod:
++
+[source,bash,role=execute]
+----
+oc exec runc-probe -n kata-test -- cat /proc/1/cmdline | tr '\0' ' '
+echo
+oc exec kata-probe -n kata-test -- cat /proc/1/cmdline | tr '\0' ' '
+----
++
+The runc probe reports the host's PID 1 — `systemd` or `/sbin/init`. The kata probe reports its guest VM's PID 1 — the `kata-agent` binary that manages the VM lifecycle. These are different kernel instances with different process trees.
+
+[NOTE]
+====
+This is the definitive field answer to "is the isolation real?" The `hostPID: true` flag is the most aggressive escape attempt short of a kernel exploit. In a runc pod it succeeds completely. In a kata pod it is silently contained by the VM boundary — the host PID namespace does not exist from inside the guest kernel.
+====
+
+== Section 3 — Multi-tenant Boundary
+
+=== The Scenario
+
+Two tenants share the same Kata node. Tenant A wants to inspect Tenant B's processes. In a runc environment this succeeds — both containers share the host PID namespace and `/proc` exposes every process on the node. In a kata environment each tenant is in a separate guest VM — Tenant A cannot reach Tenant B's process tree at all.
+
+=== Deploy Tenant Workloads
+
+. Deploy two kata tenant pods on the same node, each running a unique sleep value:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kata-tenant-a
+  namespace: kata-test
+spec:
+  runtimeClassName: kata
+  tolerations:
+  - key: kata
+    value: "true"
+    effect: NoSchedule
+  containers:
+  - name: workload
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sleep", "11111"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kata-tenant-b
+  namespace: kata-test
+spec:
+  runtimeClassName: kata
+  tolerations:
+  - key: kata
+    value: "true"
+    effect: NoSchedule
+  containers:
+  - name: workload
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sleep", "22222"]
+EOF
+----
+
+. Wait for both to be Running:
++
+[source,bash,role=execute]
+----
+oc get pods -n kata-test -l '!name' -w
+----
++
+Press `Ctrl+C` when both kata tenant pods are `Running`.
+
+=== Kata: Cross-tenant Inspection Attempt
+
+. From Tenant A, attempt to find Tenant B's process (`sleep 22222`):
++
+[source,bash,role=execute]
+----
+oc exec kata-tenant-a -n kata-test -- \
+  sh -c 'ls /proc | grep -E "^[0-9]+$" | \
+  xargs -I{} sh -c "cat /proc/{}/cmdline 2>/dev/null | tr \"\\0\" \" \"" | \
+  grep -F "sleep 22222" || echo "NOT FOUND — tenant B process is not visible"'
+----
++
+`NOT FOUND`. Tenant A is running in its own guest VM. Tenant B's `sleep 22222` is running in a completely separate guest VM. There is no shared kernel, no shared `/proc`, no path between them.
+
+=== Runc: Cross-tenant Inspection for Comparison
+
+. Deploy two runc tenant pods with host PID access:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: runc-tenant-a
+  namespace: kata-test
+spec:
+  hostPID: true
+  containers:
+  - name: workload
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sleep", "33333"]
+    securityContext:
+      privileged: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: runc-tenant-b
+  namespace: kata-test
+spec:
+  hostPID: true
+  containers:
+  - name: workload
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sleep", "44444"]
+    securityContext:
+      privileged: true
+EOF
+----
+
+. Wait for both to be Running:
++
+[source,bash,role=execute]
+----
+oc get pods -n kata-test -w
+----
+
+. From runc Tenant A, find runc Tenant B's process (`sleep 44444`):
++
+[source,bash,role=execute]
+----
+oc exec runc-tenant-a -n kata-test -- \
+  sh -c 'ls /proc | grep -E "^[0-9]+$" | \
+  xargs -I{} sh -c "cat /proc/{}/cmdline 2>/dev/null | tr \"\\0\" \" \"" | \
+  grep -F "sleep 44444" || echo "NOT FOUND"'
+----
++
+The runc tenant can see the other tenant's process directly via `/proc`. Both containers share the host PID namespace — there is no boundary between them. This is soft multi-tenancy: isolation by policy only, not by kernel boundary.
+
+[NOTE]
+====
+The contrast is the takeaway. Kata provides *hard* multi-tenancy — a VM boundary enforced by KVM hardware. Runc provides *soft* multi-tenancy — Linux namespaces enforced by the kernel, which a privileged process or kernel vulnerability can bypass. For regulated workloads or untrusted code, hard multi-tenancy is the requirement.
+====
+
+=== Clean Up
+
+[source,bash,role=execute]
+----
+oc delete pod runc-probe kata-probe \
+  kata-tenant-a kata-tenant-b \
+  runc-tenant-a runc-tenant-b \
+  -n kata-test
+----
+
+== Summary
+
+=== What You Learned
+
+* **Kernel version sameness does not mean isolation is absent.** Red Hat OSC builds the kata guest kernel from the RHCOS node kernel — version is identical, but each kata pod runs a private kernel instance inside a KVM VM.
+* **`hostPID: true` is the empirical isolation test.** A runc pod with host PID access sees hundreds of host PIDs. A kata pod with the same flag sees only its own guest VM processes — the VM boundary absorbs the request.
+* **Kata provides hard multi-tenancy.** Two kata pods on the same node cannot see each other's process trees. The VMs are opaque to each other and to the host.
+* **Runc provides soft multi-tenancy.** With host PID access, runc containers can see every process on the node — including processes belonging to other tenants.
+
+=== Key Takeaways for Customer Conversations
+
+*"The kernel version in the kata pod is the same as the host — is it really isolated?"*
+
+Yes. Red Hat OSC uses the RHCOS kernel as the guest kernel — the version is identical, but the isolation is in the kernel instance, not the version string. Each kata pod runs its own private kernel execution inside a KVM VM. The host cannot see into it; other kata pods cannot see into it. The `hostPID: true` test in this module demonstrates this empirically: even with explicit host PID namespace access, the kata pod is contained.
+
+*"How is kata different from just using Linux namespaces?"*
+
+Linux namespaces are enforced by the host kernel. A kernel exploit or privileged process can bypass them. KVM hardware virtualisation enforces the kata boundary — the guest VM cannot access the host kernel regardless of what software does inside it. This is the difference between soft and hard multi-tenancy.
+
+*"When should I recommend kata over runc to a customer?"*
+
+Kata is the right choice when: the workload runs untrusted or third-party code; the customer is in a regulated industry with hard tenant isolation requirements (FSI, healthcare, government); or the threat model includes a container escape scenario. For standard internal workloads where the code is trusted and tenants are internal teams, runc namespaces are sufficient and carry lower overhead.
