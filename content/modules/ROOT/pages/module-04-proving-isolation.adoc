@@ -193,17 +193,26 @@ Two tenants share the same Kata node. Tenant A wants to inspect Tenant B's proce
 
 === Deploy Tenant Workloads
 
-. Deploy two kata tenant pods on the same node, each running a unique sleep value:
+. Pick a kata node to host both tenant pods:
 +
 [source,bash,role=execute]
 ----
-oc apply -f - <<'EOF'
+NODE=$(oc get nodes -l node-role.kubernetes.io/kata= -o jsonpath='{.items[0].metadata.name}')
+echo $NODE
+----
+
+. Deploy two kata tenant pods pinned to the same node, each running a unique sleep value:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: kata-tenant-a
   namespace: kata-test
 spec:
+  nodeName: $NODE
   runtimeClassName: kata
   tolerations:
   - key: kata
@@ -220,6 +229,7 @@ metadata:
   name: kata-tenant-b
   namespace: kata-test
 spec:
+  nodeName: $NODE
   runtimeClassName: kata
   tolerations:
   - key: kata
@@ -248,10 +258,12 @@ Press `Ctrl+C` when both kata tenant pods are `Running`.
 [source,bash,role=execute]
 ----
 oc exec kata-tenant-a -n kata-test -- \
-  sh -c 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\000" "\n" | grep -F "22222" || echo "NOT FOUND — tenant B process is not visible"'
+  sh -c 'grep -a "[2]2222" /proc/*/cmdline 2>/dev/null || echo "NOT FOUND — tenant B process is not visible"'
 ----
 +
 `NOT FOUND`. Tenant A is running in its own guest VM. Tenant B's `sleep 22222` is running in a completely separate guest VM. There is no shared kernel, no shared `/proc`, no path between them.
++
+NOTE: The `[2]2222` pattern matches `22222` but does not contain the literal string `22222`, so grep does not match its own cmdline entry — a standard trick to avoid self-matching process searches.
 
 === Runc: Cross-tenant Inspection for Comparison
 
@@ -302,7 +314,7 @@ oc get pods -n kata-test -w
 [source,bash,role=execute]
 ----
 oc exec runc-tenant-a -n kata-test -- \
-  sh -c 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\000" "\n" | grep -F "44444" || echo "NOT FOUND"'
+  sh -c 'grep -a "[4]4444" /proc/*/cmdline 2>/dev/null || echo "NOT FOUND"'
 ----
 +
 The runc tenant can see the other tenant's process directly via `/proc`. Both containers share the host PID namespace — there is no boundary between them. This is soft multi-tenancy: isolation by policy only, not by kernel boundary.
