@@ -330,10 +330,36 @@ oc debug node/$KATA_NODE
 +
 [source,bash,role=execute]
 ----
-chroot /host crictl info | grep -A 5 kata
+chroot /host crictl info | python3 -c "
+import json,sys
+info=json.load(sys.stdin)
+for name,cfg in info.get('config',{}).get('runtimes',{}).items():
+    if 'kata' in name:
+        print(f'{name}: {cfg.get(\"runtimeType\",cfg.get(\"RuntimeType\",\"-\"))} -> {cfg.get(\"runtimePath\",cfg.get(\"RuntimePath\",\"-\"))}')
+"
 ----
 +
-The `kata` handler should appear in the `runtimes` section of the containerd configuration. If it is absent, the DaemonSet installation did not complete on this node — check `oc get kataconfig -o yaml` and look for the node listed under `status.kataNodes.failed`.
+Expected output:
++
+----
+kata: vm -> /usr/bin/containerd-shim-kata-v2
+kata-nvidia-gpu: vm -> /usr/bin/containerd-shim-kata-v2
+kata-remote: vm -> /usr/bin/containerd-shim-kata-v2
+kata-se: vm -> /usr/bin/containerd-shim-kata-v2
+kata-snp: vm -> /usr/bin/containerd-shim-kata-v2
+kata-snp-nvidia-gpu: vm -> /usr/bin/containerd-shim-kata-v2
+kata-tdx: vm -> /usr/bin/containerd-shim-kata-v2
+kata-tdx-nvidia-gpu: vm -> /usr/bin/containerd-shim-kata-v2
+----
++
+OSC installs eight kata runtime variants. All share the same shim binary (`containerd-shim-kata-v2`) and `RuntimeType: vm` — confirming every variant runs workloads inside a micro-VM, not as a standard Linux process. The variants differ in hardware security technology:
++
+* `kata` — standard QEMU/KVM, used in this lab
+* `kata-remote` — peer pods (workload VM runs in Azure, not on the node)
+* `kata-snp` / `kata-tdx` / `kata-se` — confidential computing variants (AMD SEV-SNP, Intel TDX, IBM Secure Execution)
+* `kata-*-nvidia-gpu` — GPU passthrough variants
++
+If this output is empty, the DaemonSet installation did not complete on this node — check `oc get kataconfig -o yaml` and look for the node listed under `status.kataNodes.failed`.
 
 . Exit the debug shell:
 +
