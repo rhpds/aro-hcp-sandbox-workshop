@@ -149,7 +149,7 @@ Press `Ctrl+C` when both show `Running`.
 [source,bash,role=execute]
 ----
 oc exec runc-probe -n kata-test -- \
-  sh -c 'ls /proc | grep -E "^[0-9]+$" | wc -l'
+  sh -c 'ls /proc | grep -cE "^[0-9]+$"'
 ----
 +
 . Count visible PIDs in the kata probe:
@@ -157,7 +157,7 @@ oc exec runc-probe -n kata-test -- \
 [source,bash,role=execute]
 ----
 oc exec kata-probe -n kata-test -- \
-  sh -c 'ls /proc | grep -E "^[0-9]+$" | wc -l'
+  sh -c 'ls /proc | grep -cE "^[0-9]+$"'
 ----
 +
 The runc probe will show hundreds of PIDs — it is looking into the host's PID namespace, where every container process on the node is visible. The kata probe will show a handful — it can only see the processes inside its own guest VM, regardless of the `hostPID: true` flag.
@@ -248,9 +248,7 @@ Press `Ctrl+C` when both kata tenant pods are `Running`.
 [source,bash,role=execute]
 ----
 oc exec kata-tenant-a -n kata-test -- \
-  sh -c 'ls /proc | grep -E "^[0-9]+$" | \
-  xargs -I{} sh -c "cat /proc/{}/cmdline 2>/dev/null | tr \"\\0\" \" \"" | \
-  grep -F "sleep 22222" || echo "NOT FOUND — tenant B process is not visible"'
+  sh -c 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\000" "\n" | grep -F "22222" || echo "NOT FOUND — tenant B process is not visible"'
 ----
 +
 `NOT FOUND`. Tenant A is running in its own guest VM. Tenant B's `sleep 22222` is running in a completely separate guest VM. There is no shared kernel, no shared `/proc`, no path between them.
@@ -304,9 +302,7 @@ oc get pods -n kata-test -w
 [source,bash,role=execute]
 ----
 oc exec runc-tenant-a -n kata-test -- \
-  sh -c 'ls /proc | grep -E "^[0-9]+$" | \
-  xargs -I{} sh -c "cat /proc/{}/cmdline 2>/dev/null | tr \"\\0\" \" \"" | \
-  grep -F "sleep 44444" || echo "NOT FOUND"'
+  sh -c 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\000" "\n" | grep -F "44444" || echo "NOT FOUND"'
 ----
 +
 The runc tenant can see the other tenant's process directly via `/proc`. Both containers share the host PID namespace — there is no boundary between them. This is soft multi-tenancy: isolation by policy only, not by kernel boundary.
