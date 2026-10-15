@@ -267,17 +267,28 @@ NOTE: The `[2]2222` pattern matches `22222` but does not contain the literal str
 
 === Runc: Cross-tenant Inspection for Comparison
 
-. Deploy two runc tenant pods with host PID access:
+. Pick a non-kata worker node to host both runc tenant pods:
 +
 [source,bash,role=execute]
 ----
-oc apply -f - <<'EOF'
+RUNC_NODE=$(oc get nodes -l '!node-role.kubernetes.io/kata' \
+  --field-selector='status.conditions[-1].type=Ready' \
+  -o jsonpath='{.items[0].metadata.name}')
+echo $RUNC_NODE
+----
+
+. Deploy two runc tenant pods pinned to the same node with host PID access:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: runc-tenant-a
   namespace: kata-test
 spec:
+  nodeName: $RUNC_NODE
   hostPID: true
   containers:
   - name: workload
@@ -292,6 +303,7 @@ metadata:
   name: runc-tenant-b
   namespace: kata-test
 spec:
+  nodeName: $RUNC_NODE
   hostPID: true
   containers:
   - name: workload
