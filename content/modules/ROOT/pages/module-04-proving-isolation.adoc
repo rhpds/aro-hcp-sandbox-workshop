@@ -348,7 +348,13 @@ oc exec runc-tenant-a -n kata-test -- \
   sh -c 'grep -a "[4]4444" /proc/*/cmdline 2>/dev/null || echo "NOT FOUND"'
 ----
 +
-The runc tenant can see the other tenant's process directly via `/proc`. Both containers share the host PID namespace — there is no boundary between them. This is soft multi-tenancy: isolation by policy only, not by kernel boundary.
+Expected output (PID will vary):
++
+----
+/proc/258087/cmdline:/usr/bin/coreutils--coreutils-prog-shebang=sleep/usr/bin/sleep44444
+----
++
+The arguments appear concatenated because `/proc/PID/cmdline` uses null bytes as separators and `grep -a` prints the raw content. The match confirms runc Tenant A can see Tenant B's process directly via `/proc`. Both containers share the host PID namespace — there is no boundary between them. This is soft multi-tenancy: isolation by policy only, not by kernel boundary.
 
 [NOTE]
 ====
