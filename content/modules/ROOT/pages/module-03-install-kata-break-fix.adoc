@@ -332,10 +332,15 @@ oc debug node/$KATA_NODE
 ----
 chroot /host crictl info | python3 -c "
 import json,sys
-info=json.load(sys.stdin)
-for name,cfg in info.get('config',{}).get('runtimes',{}).items():
-    if 'kata' in name:
-        print(f'{name}: {cfg.get(\"runtimeType\",cfg.get(\"RuntimeType\",\"-\"))} -> {cfg.get(\"runtimePath\",cfg.get(\"RuntimePath\",\"-\"))}')
+def find(obj):
+    if isinstance(obj,dict):
+        for k,v in obj.items():
+            if 'kata' in k and isinstance(v,dict) and 'RuntimePath' in v:
+                print(f'{k}: {v.get(\"RuntimeType\",\"-\")} -> {v.get(\"RuntimePath\",\"-\")}')
+            find(v)
+    elif isinstance(obj,list):
+        [find(i) for i in obj]
+find(json.load(sys.stdin))
 "
 ----
 +
