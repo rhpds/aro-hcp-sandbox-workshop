@@ -171,7 +171,14 @@ echo
 oc exec kata-probe -n kata-test -- cat /proc/1/cmdline | tr '\0' ' '
 ----
 +
-The runc probe reports the host's PID 1 — `systemd` or `/sbin/init`. The kata probe reports its guest VM's PID 1 — the `kata-agent` binary that manages the VM lifecycle. These are different kernel instances with different process trees.
+Expected output:
++
+----
+/usr/lib/systemd/systemd --switched-root --system --deserialize 27
+/usr/bin/sleep infinity
+----
++
+The runc probe reports the **host's** PID 1 — `systemd`. The pod entered the host PID namespace and is looking at the node's own init process, not its own. The kata probe reports its own entrypoint — `sleep infinity`. It cannot see systemd at all. `hostPID: true` had no effect: the kata pod is fully contained inside its guest VM, and the host PID namespace is simply not reachable from there.
 
 [NOTE]
 ====
