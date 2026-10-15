@@ -292,7 +292,6 @@ NOTE: The `[2]2222` pattern matches `22222` but does not contain the literal str
 [source,bash,role=execute]
 ----
 RUNC_NODE=$(oc get nodes -l '!node-role.kubernetes.io/kata' \
-  --field-selector='status.conditions[-1].type=Ready' \
   -o jsonpath='{.items[0].metadata.name}')
 echo $RUNC_NODE
 ----
