@@ -30,11 +30,12 @@ The isolation is at the kernel *instance* level, not the version level. Each kat
 
 === Run the Comparison
 
-. Get the host kernel version from the bastion:
+. Get the kernel version directly from a kata worker node:
 +
 [source,bash,role=execute]
 ----
-uname -r
+oc debug node/$(oc get nodes -l node-role.kubernetes.io/kata= \
+  -o jsonpath='{.items[0].metadata.name}') -- chroot /host uname -r
 ----
 
 . Run a runc pod and print its kernel version:
