@@ -48,6 +48,7 @@
     --vnet-name "{{ aro_hcp_cluster_vnet }}"
     --resource-group "{{ aro_hcp_cluster_rg }}"
     --address-prefixes "{{ aro_hcp_cluster_integration_subnet_prefix }}"
+    --network-security-group "{{ aro_hcp_cluster_nsg }}"
     --delegations Microsoft.RedHatOpenShift/hcpOpenShiftClusters
   register: r_integration_subnet
   changed_when: true
