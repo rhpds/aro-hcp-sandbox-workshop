@@ -1,0 +1,260 @@
+= Build Pipeline: Host Escape Attempt
+
+== Value Proposition
+
+Module 4 proved isolation by *inspection* — kernel instances, process namespaces, cross-tenant visibility. This module proves it by *attack*.
+
+The scenario is one every platform team recognises: malicious code reaches a build pipeline. It is not a question of *if* — external contributions, third-party dependencies, and compromised build steps make it a certainty at scale. The only question that matters is blast radius: when hostile code executes, what can it reach?
+
+You deploy a build pod under the Kata runtime and run two escape attempts from inside it — a `sysrq-trigger` that would reboot a runc host node, and a kernel module load that targets the host filesystem. Both are absorbed by the Kata guest VM. The host node does not reboot, the host kernel is untouched, and neighbouring workloads keep running. The module closes by turning that result into a field conversation: a blast-radius decision tree and three discovery questions you can use directly in a customer meeting.
+
+[IMPORTANT]
+====
+The escape commands in this module are deliberately hostile — `echo b > /proc/sysrq-trigger` reboots a Linux host, and `insmod` loads code into a running kernel. They are safe *here only because the Kata guest VM contains them*. Run them inside the Kata build pod exactly as written. Do not run them on the bastion, on a node, or inside a runc pod.
+====
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Deploy a build pod under the Kata runtime to simulate an untrusted build-pipeline workload
+* Demonstrate that a `sysrq-trigger` reboot attempt inside a Kata pod does not reboot or affect the host node
+* Demonstrate that a kernel module load attempt inside a Kata pod does not affect the host kernel or filesystem
+* Verify that all cluster nodes remain Ready and neighbouring workloads are unaffected after each escape attempt
+* Apply a field decision framework: when to recommend Kata, when not to, and three discovery questions for a customer conversation
+
+== Prerequisites
+
+This module continues from the `kata-test` namespace used in Modules 3 and 4.
+
+* Module 4 completed
+* The `kata` RuntimeClass is present (`oc get runtimeclass kata`)
+* The Kata SCC is bound to the service account the build pod runs under (configured in Module 3)
+* The build pod image is pre-staged — it includes the test kernel module (`test-module.ko`) compiled for the Kata guest kernel version used in this lab environment
+
+[NOTE]
+====
+The `test-module.ko` artifact and the build pod image are tied to the specific Kata guest kernel version in this environment. Different Red Hat OpenShift Sandboxed Containers releases ship different guest kernels. The lab environment pre-stages a matching image; you do not build it during the session.
+====
+
+== Section 1 — Deploy the Build Pod Under Kata
+
+=== Deploy
+
+. Deploy the build pod with `runtimeClassName: kata` so it runs inside a Kata guest VM:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: build-pod
+  namespace: kata-test
+  labels:
+    app: build-pipeline
+spec:
+  runtimeClassName: kata
+  tolerations:
+  - key: kata
+    value: "true"
+    effect: NoSchedule
+  containers:
+  - name: build
+    image: quay.io/rhdp/aro-hcp-sandbox-build-pod:latest
+    command: ["sleep", "infinity"]
+    securityContext:
+      privileged: true
+EOF
+----
++
+NOTE: The `privileged: true` setting is intentional. It gives the build pod the broadest possible capabilities — exactly what a compromised build step would try to exploit. In a runc pod this is a direct path to the host. In a Kata pod the privilege applies *inside the guest VM only*.
+
+. Confirm the build pod reaches `Running` on a Kata node:
++
+[source,bash,role=execute]
+----
+oc get pod build-pod -n kata-test -o wide
+----
+
+=== Set Up the Observation Terminals
+
+You will watch the host from two angles while the escape runs.
+
+. In a second terminal, watch node Ready status continuously:
++
+[source,bash,role=execute]
+----
+oc get nodes -w
+----
+
+. In a third terminal, deploy a neighbouring workload on the *same* Kata node and confirm it is running — this is the "innocent tenant" whose survival you will verify after each attempt:
++
+[source,bash,role=execute]
+----
+NODE=$(oc get pod build-pod -n kata-test -o jsonpath='{.spec.nodeName}')
+oc apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: neighbour
+  namespace: kata-test
+spec:
+  nodeName: $NODE
+  runtimeClassName: kata
+  tolerations:
+  - key: kata
+    value: "true"
+    effect: NoSchedule
+  containers:
+  - name: workload
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sleep", "infinity"]
+EOF
+oc get pod neighbour -n kata-test -o wide
+----
+
+== Section 2 — Escape Attempt 1: sysrq-trigger
+
+The magic SysRq key is a kernel feature: writing a command character to `/proc/sysrq-trigger` asks the kernel to act immediately, bypassing userspace. `echo b` triggers an immediate reboot with no sync and no shutdown sequence. On a runc host this reboots the *node* — taking down every container on it.
+
+. Exec into the build pod:
++
+[source,bash,role=execute]
+----
+oc exec -it build-pod -n kata-test -- /bin/bash
+----
+
+. From inside the build pod, trigger the reboot:
++
+[source,bash,role=execute]
+----
+echo b > /proc/sysrq-trigger
+----
++
+The command is accepted by the guest kernel. From the pod's point of view, it did exactly what it was told. What it rebooted — if anything — was the Kata guest VM's own kernel, not the host.
+
+. Switch to the node-watch terminal. All nodes remain `Ready`. No node cycles through `NotReady`. The host node did not reboot.
+
+. Switch to the neighbour terminal and confirm the innocent tenant is untouched:
++
+[source,bash,role=execute]
+----
+oc get pod neighbour -n kata-test
+----
++
+The neighbour is still `Running`. It shares the same physical node as the build pod, but it is in a separate Kata guest VM — the reboot request never crossed the VM boundary.
+
+[NOTE]
+====
+On a runc node this single command is catastrophic: the node reboots, every pod on it is killed, and the workloads reschedule elsewhere only if the cluster has capacity. With Kata, the sysrq event is processed by the guest kernel inside the VM. The host kernel never sees it. This is the difference between a host-wide outage and a single-pod event.
+====
+
+== Section 3 — Escape Attempt 2: Kernel Module Load
+
+Loading a kernel module is the most direct way for privileged code to run in kernel space — the classic goal of a container escape. The build pod image ships a pre-staged test module, `test-module.ko`, compiled for the Kata guest kernel.
+
+. Still inside the build pod, attempt to load the module:
++
+[source,bash,role=execute]
+----
+insmod /opt/test-module/test-module.ko
+----
++
+Whatever the outcome inside the guest, the module targets the *Kata guest kernel* — the private kernel instance running inside this pod's VM. It is not loaded into the host kernel.
+
+. Confirm the module, if loaded, exists only in the guest:
++
+[source,bash,role=execute]
+----
+lsmod | grep test_module || echo "not present in guest"
+----
+
+. Exit the build pod:
++
+[source,bash,role=execute]
+----
+exit
+----
+
+. Switch to the node-watch terminal: all nodes remain `Ready`. Confirm the neighbour again:
++
+[source,bash,role=execute]
+----
+oc get pod neighbour -n kata-test
+----
++
+The host kernel and host filesystem are unaffected. A kernel module loaded inside the guest cannot reach them — the guest kernel and the host kernel are different kernel instances separated by the KVM boundary.
+
+[NOTE]
+====
+On a runc node, a successful `insmod` means attacker code is now running in the host kernel — the most complete compromise possible, with visibility into every container and every secret on the node. With Kata, `insmod` reaches only the guest kernel, which is destroyed when the pod is deleted.
+====
+
+== Section 4 — Field Conversation: Blast Radius
+
+The takeaway is not a command — it is a reframe. Walk a customer through this directly.
+
+=== Reframe the Question
+
+The question is *not* whether malicious code gets submitted to a build pipeline. It will — through an external contribution, a poisoned dependency, or a compromised build step. The question is what the blast radius is when it does.
+
+* *With runc:* a successful escape affects the host node and every container running on it. One compromised build pod can own the node.
+* *With Kata:* the blast radius is the guest VM. The compromised pod is destroyed; the host and its neighbours are untouched.
+
+=== When to Recommend Kata
+
+[cols="1,3",options="header"]
+|===
+| Recommend Kata when… | Do *not* reach for Kata when…
+
+| Workloads are multi-tenant on shared nodes
+| Workloads are single-tenant and fully trusted
+
+| The workload source is untrusted — external build pipelines, third-party or customer-submitted code
+| The code is first-party and trusted end to end
+
+| Compliance mandates kernel-level (not just namespace) isolation
+| Namespace isolation already satisfies the requirement
+
+| The threat model includes container escape
+| The Azure VM SKU does not support nested virtualization, or the guest-kernel overhead is unacceptable for the workload profile
+|===
+
+=== Three Discovery Questions
+
+Use these to surface whether a customer actually needs hard isolation:
+
+. Do you run workloads from multiple tenants or untrusted sources on shared nodes?
+. What is your incident response plan if a container escape occurs today?
+. Does your compliance framework require kernel-level workload isolation, or only namespace isolation?
+
+== Clean Up
+
+[source,bash,role=execute]
+----
+oc delete pod build-pod neighbour -n kata-test
+----
+
+== Summary
+
+=== What You Learned
+
+* *A `sysrq-trigger` reboot inside a Kata pod does not reboot the host node.* The sysrq is processed by the Kata guest kernel, not the host kernel.
+* *A kernel module load inside a Kata pod targets the guest kernel.* The host kernel and host filesystem are unaffected.
+* *The isolation boundary held under direct attack.* After both escape attempts, all nodes stayed Ready and the neighbouring workload kept running.
+* *The field conversation is about blast radius* — not whether hostile code reaches the runtime, but what it can reach when it does.
+
+=== Key Takeaways for Customer Conversations
+
+*"Can't a privileged container just escape to the host?"*
+
+With runc, a privileged container is effectively root on the node — `/proc/sysrq-trigger` and `insmod` both reach the host kernel directly. With Kata, `privileged: true` applies inside the guest VM. This module demonstrated both escapes being absorbed by the VM boundary while the host and its neighbours stayed up.
+
+*"We can't stop malicious code from reaching our build pipeline. What do we do?"*
+
+You do not have to stop it — you have to contain it. Run untrusted build workloads under Kata so that a successful escape is limited to a disposable guest VM instead of compromising the node and every tenant on it. Reframe the risk conversation from prevention to blast radius.
+
+*"When is Kata worth the overhead?"*
+
+When workloads are multi-tenant, the source is untrusted, or compliance mandates kernel-level isolation. For trusted first-party workloads on dedicated nodes, runc namespaces are sufficient and carry lower overhead.

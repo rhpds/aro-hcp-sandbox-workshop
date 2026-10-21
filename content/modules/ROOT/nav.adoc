@@ -4,3 +4,4 @@
 * xref:module-02-kata-nodepool-operator.adoc[Module 2 : A Second NodePool: Kata Containers on ARO HCP]
 * xref:module-03-install-kata-break-fix.adoc[Module 3 : Install Kata, Break It, Fix It]
 * xref:module-04-proving-isolation.adoc[Module 4 : Proving Isolation: Kernel, Process, and Tenant Boundaries]
+* xref:module-05-host-escape.adoc[Module 5 : Build Pipeline: Host Escape Attempt]
