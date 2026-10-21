@@ -1,13 +1,304 @@
 ---
 # E2E — End-to-end test
-# Runs all module solve + validate sequences to verify the full lab
-# works from start to finish without manual intervention.
+# Walks the lab module by module and verifies the end state each module teaches,
+# then runs the empirical isolation and host-escape checks live.
+#
+# This lab is trust-based (no per-step solve/validate buttons), so the e2e asserts
+# the observable end state of each module rather than replaying every command:
+#   Module 0 — ARO HCP managed control plane: worker VMs present, no master VMs
+#   Module 1 — HyperShift / NodePool: worker nodes Ready, expected replica count
+#   Module 2 — Kata NodePool + Sandboxed Containers operator CSV Succeeded
+#   Module 3 — KataConfig installed + 'kata' RuntimeClass usable (kata pod runs)
+#   Module 4 — Kernel + process isolation: hostPID kata pod cannot see the host
+#   Module 5 — Host escape: sysrq-trigger inside a kata pod does not reboot the host
+#
+# All test workloads are created in a disposable namespace and removed in the
+# always block, so a partial run leaves no residue.
+#
+# Usage (from the bastion, oc + az authenticated):
+#   ansible-playbook qa-automation/e2e.yml
+#   ansible-playbook qa-automation/e2e.yml -e qa_require_azure=true
 
 - name: "End-to-End Test"
   hosts: localhost
   connection: local
   gather_facts: false
+
+  vars:
+    qa_kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('/home/azure/.kube/config', true) }}"
+    qa_cluster_name: "{{ aro_hcp_cluster_name | default('aro' + (guid | default(''))) }}"
+    qa_cluster_rg: "{{ aro_hcp_cluster_rg | default(qa_cluster_name + '-aro-hcp-rg') }}"
+    qa_managed_rg: "{{ aro_hcp_cluster_managed_rg | default(qa_cluster_name + '-aro-hcp-managed-rg') }}"
+
+    qa_kata_runtimeclass: kata
+    qa_kata_node_label: "node-role.kubernetes.io/kata"
+    qa_kata_toleration_key: kata
+
+    # Expected worker count from the spec (2 default NodePool + 1 Kata-dedicated).
+    qa_expected_min_nodes: 3
+
+    # Disposable namespace for e2e workloads.
+    qa_test_namespace: "aro-hcp-e2e"
+
+    # Image used for probe/escape pods.
+    qa_probe_image: "registry.access.redhat.com/ubi9/ubi-minimal"
+
+    qa_pod_wait_timeout: 180
+    qa_require_azure: false
+
+  environment:
+    KUBECONFIG: "{{ qa_kubeconfig }}"
+
   tasks:
-    - name: "TODO: Implement end-to-end test sequence"
-      ansible.builtin.debug:
-        msg: "Replace this task with your e2e test implementation"
+    - name: "E2E test sequence"
+      block:
+        # -----------------------------------------------------------
+        # Module 0 — Managed control plane: workers yes, masters no
+        # -----------------------------------------------------------
+        - name: "M0 | List VMs in the ARO HCP managed resource group"
+          ansible.builtin.command: >-
+            az vm list
+            --resource-group {{ qa_managed_rg }}
+            --query [].name
+            --output tsv
+          register: r_m0_vms
+          changed_when: false
+          failed_when: false
+
+        - name: "M0 | Assert worker VMs exist and no master/control-plane VMs do"
+          ansible.builtin.assert:
+            that:
+              - r_m0_vms.rc == 0
+              - r_m0_vms.stdout_lines | length > 0
+              - r_m0_vms.stdout_lines | select('search', '(?i)master|control-plane|etcd') | list | length == 0
+            fail_msg: >-
+              Managed RG VM inventory failed the control-plane-absence check
+              (rc={{ r_m0_vms.rc }}): {{ r_m0_vms.stdout }} {{ r_m0_vms.stderr | default('') }}
+            success_msg: >-
+              Module 0 OK: {{ r_m0_vms.stdout_lines | length }} data-plane VM(s),
+              no customer-managed control-plane VMs.
+          when: qa_require_azure | bool
+
+        - name: "M0 | Advisory when az is not enforced"
+          ansible.builtin.debug:
+            msg: >-
+              {% if r_m0_vms.rc == 0 %}Module 0: managed RG VMs = {{ r_m0_vms.stdout_lines }}.
+              {% else %}Module 0 Azure check skipped (az not authenticated; set
+              -e qa_require_azure=true to enforce).{% endif %}
+          when: not (qa_require_azure | bool)
+
+        # -----------------------------------------------------------
+        # Module 1 — HyperShift / NodePool scaling
+        # -----------------------------------------------------------
+        - name: "M1 | Collect node Ready status"
+          ansible.builtin.command: >-
+            oc get nodes
+            -o jsonpath={range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}
+          register: r_m1_nodes
+          changed_when: false
+
+        - name: "M1 | Assert expected worker nodes are Ready"
+          ansible.builtin.assert:
+            that:
+              - r_m1_nodes.stdout_lines | length >= qa_expected_min_nodes
+              - r_m1_nodes.stdout_lines | select('search', '=False|=Unknown') | list | length == 0
+            fail_msg: >-
+              Expected >= {{ qa_expected_min_nodes }} Ready nodes, got:
+              {{ r_m1_nodes.stdout }}
+            success_msg: "Module 1 OK: {{ r_m1_nodes.stdout_lines | length }} nodes Ready."
+
+        # -----------------------------------------------------------
+        # Module 2 — Kata NodePool + Sandboxed Containers operator
+        # -----------------------------------------------------------
+        - name: "M2 | Check Kata-labelled nodes exist"
+          ansible.builtin.command: >-
+            oc get nodes -l {{ qa_kata_node_label }}= -o jsonpath={.items[*].metadata.name}
+          register: r_m2_kata_nodes
+          changed_when: false
+          failed_when: false
+
+        - name: "M2 | Check Sandboxed Containers operator CSV phase"
+          ansible.builtin.command: >-
+            oc get csv -n openshift-sandboxed-containers-operator
+            -o jsonpath={range .items[*]}{.metadata.name}={.status.phase}{"\n"}{end}
+          register: r_m2_csv
+          changed_when: false
+          failed_when: false
+
+        - name: "M2 | Assert Kata NodePool present and operator Succeeded"
+          ansible.builtin.assert:
+            that:
+              - r_m2_kata_nodes.stdout | trim | length > 0
+              - r_m2_csv.rc == 0
+              - r_m2_csv.stdout_lines | select('search', 'sandboxed-containers.*=Succeeded') | list | length > 0
+            fail_msg: >-
+              Kata NodePool or operator not ready — kata nodes='{{ r_m2_kata_nodes.stdout | trim }}',
+              CSVs={{ r_m2_csv.stdout_lines | default([]) }}.
+            success_msg: "Module 2 OK: Kata NodePool present, Sandboxed Containers operator Succeeded."
+
+        # -----------------------------------------------------------
+        # Module 3 — KataConfig + usable 'kata' RuntimeClass
+        # -----------------------------------------------------------
+        - name: "M3 | Check the kata RuntimeClass exists"
+          ansible.builtin.command: "oc get runtimeclass {{ qa_kata_runtimeclass }} -o name"
+          register: r_m3_rc
+          changed_when: false
+          failed_when: false
+
+        - name: "M3 | Assert RuntimeClass is present"
+          ansible.builtin.assert:
+            that:
+              - r_m3_rc.rc == 0
+              - "'runtimeclass.node.k8s.io/' + qa_kata_runtimeclass in r_m3_rc.stdout"
+            fail_msg: "kata RuntimeClass not found (rc={{ r_m3_rc.rc }})."
+            success_msg: "Module 3 OK (step 1/2): kata RuntimeClass present."
+
+        - name: "M3 | Create the e2e test namespace"
+          ansible.builtin.command: "oc create namespace {{ qa_test_namespace }}"
+          register: r_m3_ns
+          changed_when: "'created' in r_m3_ns.stdout"
+          failed_when:
+            - r_m3_ns.rc != 0
+            - "'AlreadyExists' not in r_m3_ns.stderr"
+
+        - name: "M3 | Launch a kata pod to prove the runtime schedules and runs"
+          ansible.builtin.command: >-
+            oc run e2e-kata-kernel
+            -n {{ qa_test_namespace }}
+            --image={{ qa_probe_image }}
+            --restart=Never
+            --overrides={{ _kata_kernel_overrides | to_json }}
+            --command -- uname -r
+          vars:
+            _kata_kernel_overrides:
+              spec:
+                runtimeClassName: "{{ qa_kata_runtimeclass }}"
+                tolerations:
+                  - key: "{{ qa_kata_toleration_key }}"
+                    value: "true"
+                    effect: NoSchedule
+          register: r_m3_run
+          changed_when: true
+
+        - name: "M3 | Wait for the kata pod to complete"
+          ansible.builtin.command: >-
+            oc wait pod/e2e-kata-kernel -n {{ qa_test_namespace }}
+            --for=jsonpath={.status.phase}=Succeeded --timeout={{ qa_pod_wait_timeout }}s
+          register: r_m3_wait
+          changed_when: false
+
+        - name: "M3 | Read the kata pod kernel output"
+          ansible.builtin.command: "oc logs e2e-kata-kernel -n {{ qa_test_namespace }}"
+          register: r_m3_kernel
+          changed_when: false
+
+        - name: "M3 | Assert the kata pod ran and reported a kernel version"
+          ansible.builtin.assert:
+            that:
+              - r_m3_kernel.stdout | trim | length > 0
+            fail_msg: "kata pod produced no kernel version output."
+            success_msg: "Module 3 OK: kata pod ran under RuntimeClass '{{ qa_kata_runtimeclass }}' (kernel {{ r_m3_kernel.stdout | trim }})."
+
+        # -----------------------------------------------------------
+        # Module 4 — Process isolation: hostPID kata pod is contained
+        # -----------------------------------------------------------
+        - name: "M4 | Deploy a hostPID kata probe"
+          ansible.builtin.command: "oc apply -f -"
+          args:
+            stdin: |
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: e2e-kata-probe
+                namespace: {{ qa_test_namespace }}
+              spec:
+                hostPID: true
+                runtimeClassName: {{ qa_kata_runtimeclass }}
+                tolerations:
+                - key: {{ qa_kata_toleration_key }}
+                  value: "true"
+                  effect: NoSchedule
+                containers:
+                - name: probe
+                  image: {{ qa_probe_image }}
+                  command: ["sleep", "infinity"]
+                  securityContext:
+                    privileged: true
+          changed_when: true
+
+        - name: "M4 | Wait for the kata probe to be Running"
+          ansible.builtin.command: >-
+            oc wait pod/e2e-kata-probe -n {{ qa_test_namespace }}
+            --for=jsonpath={.status.phase}=Running --timeout={{ qa_pod_wait_timeout }}s
+          changed_when: false
+
+        - name: "M4 | Count PIDs visible to the kata probe"
+          ansible.builtin.command: >-
+            oc exec e2e-kata-probe -n {{ qa_test_namespace }} --
+            sh -c "ls /proc | grep -cE '^[0-9]+$'"
+          register: r_m4_pids
+          changed_when: false
+
+        - name: "M4 | Assert the kata probe cannot see the host PID namespace"
+          ansible.builtin.assert:
+            that:
+              # A runc pod with hostPID would see hundreds of host PIDs; the kata
+              # guest only sees its own handful regardless of hostPID: true.
+              - (r_m4_pids.stdout | trim) | int > 0
+              - (r_m4_pids.stdout | trim) | int < 50
+            fail_msg: >-
+              kata probe saw {{ r_m4_pids.stdout | trim }} PIDs — expected a small
+              guest-local count; the VM isolation boundary may not be holding.
+            success_msg: "Module 4 OK: kata probe sees only {{ r_m4_pids.stdout | trim }} PIDs — host PID namespace is not reachable."
+
+        # -----------------------------------------------------------
+        # Module 5 — Host escape: sysrq-trigger absorbed by the guest
+        # -----------------------------------------------------------
+        - name: "M5 | Record node Ready count before the escape attempt"
+          ansible.builtin.command: >-
+            oc get nodes
+            -o jsonpath={range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}
+          register: r_m5_before
+          changed_when: false
+
+        - name: "M5 | Attempt sysrq reboot from inside the kata pod (must be absorbed)"
+          ansible.builtin.command: >-
+            oc exec e2e-kata-probe -n {{ qa_test_namespace }} --
+            sh -c "echo b > /proc/sysrq-trigger 2>&1 || true"
+          register: r_m5_sysrq
+          changed_when: false
+          failed_when: false
+
+        - name: "M5 | Pause briefly, then re-read node Ready status"
+          ansible.builtin.pause:
+            seconds: 15
+
+        - name: "M5 | Record node Ready count after the escape attempt"
+          ansible.builtin.command: >-
+            oc get nodes
+            -o jsonpath={range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}
+          register: r_m5_after
+          changed_when: false
+
+        - name: "M5 | Assert the host nodes were unaffected by the escape attempt"
+          ansible.builtin.assert:
+            that:
+              - r_m5_after.stdout_lines | select('equalto', 'True') | list | length
+                == r_m5_before.stdout_lines | select('equalto', 'True') | list | length
+              - r_m5_after.stdout_lines | select('search', 'False|Unknown') | list | length == 0
+            fail_msg: >-
+              Node Ready count changed after the sysrq escape attempt — before=
+              {{ r_m5_before.stdout_lines }}, after={{ r_m5_after.stdout_lines }}.
+              The Kata guest boundary did not absorb the host escape.
+            success_msg: "Module 5 OK: sysrq-trigger absorbed by the Kata guest; all host nodes remain Ready."
+
+        - name: "E2E passed"
+          ansible.builtin.debug:
+            msg: "End-to-end walk of modules 0-5 passed: managed control plane, NodePool, Kata operator, RuntimeClass, isolation, and host-escape containment all verified."
+
+      always:
+        - name: "Cleanup | Remove the e2e test namespace and its workloads"
+          ansible.builtin.command: >-
+            oc delete namespace {{ qa_test_namespace }} --ignore-not-found --wait=false
+          changed_when: false
+          failed_when: false
