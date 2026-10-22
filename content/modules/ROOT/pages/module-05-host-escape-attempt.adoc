@@ -117,7 +117,7 @@ oc exec kata-build -n kata-test -- \
 oc debug node/$KATA_NODE -- chroot /host dmesg | grep -i sysrq | tail -5
 ----
 +
-No sysrq output originating from the kata pod appears in the host dmesg. The host kernel ring buffer is clean. The sysrq write went to the guest VM's own dmesg — an isolated kernel instance that has no path to the host.
+Expected output: nothing (only the `oc debug` pod lifecycle lines). No sysrq entries from the kata pod appear in the host dmesg — empty grep output here is the proof. The sysrq write went to the guest VM's own kernel ring buffer, which has no path to the host.
 
 [NOTE]
 ====
