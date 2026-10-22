@@ -56,6 +56,14 @@ EOF
 oc wait pod/kata-build -n kata-test --for=condition=Ready --timeout=120s
 ----
 
+. Capture the node the pod landed on — all host checks will run against this node:
++
+[source,bash,role=execute]
+----
+KATA_NODE=$(oc get pod kata-build -n kata-test -o jsonpath='{.spec.nodeName}')
+echo $KATA_NODE
+----
+
 . Confirm it is running under the kata runtime:
 +
 [source,bash,role=execute]
@@ -72,17 +80,6 @@ Output: `kata`. Despite `privileged: true`, the pod is running inside a KVM gues
 On Linux, writing to `/proc/sysrq-trigger` lets a root process send commands directly to the running kernel: `b` reboots the machine, `c` triggers a crash dump, `o` powers off the system. A privileged runc container on a standard OpenShift node inherits the host's `/proc` filesystem — writing `b` to sysrq-trigger reboots the node.
 
 A kata pod has its own `/proc` provided by the guest VM kernel. sysrq commands go to the guest, not the host.
-
-=== Store the Kata Node Name
-
-. Store the kata node name for later checks:
-+
-[source,bash,role=execute]
-----
-KATA_NODE=$(oc get nodes -l node-role.kubernetes.io/kata= \
-  -o jsonpath='{.items[0].metadata.name}')
-echo $KATA_NODE
-----
 
 === Execute the Escape Attempt
 
