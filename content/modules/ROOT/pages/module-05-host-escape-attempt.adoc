@@ -121,7 +121,7 @@ Expected output: nothing (only the `oc debug` pod lifecycle lines). No sysrq ent
 
 [NOTE]
 ====
-Writing `b` (reboot) to `/proc/sysrq-trigger` inside a kata pod reboots the *guest VM*, not the host node. The kata pod would enter `Error` or `CrashLoopBackOff`. Both kata worker nodes would remain `Ready`. In a privileged runc pod, the same write reboots the physical node, taking down every workload on it.
+Writing `b` (reboot) to `/proc/sysrq-trigger` inside a kata pod reboots the *guest VM*, not the host node. The kata-shim on the host remains alive, so Kubernetes continues to report the pod as `Running` — but `oc exec` will fail with "container process not found" because the kata-agent restarted fresh with no containers registered. Without a liveness probe, Kubernetes never detects the dead container. Delete and recreate the pod to recover. Both kata worker nodes remain `Ready` throughout. In a privileged runc pod, the same write reboots the physical node, taking down every workload on it.
 ====
 
 == Section 3 — Escape Attempt 2: Kernel Module Namespace
