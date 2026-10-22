@@ -261,10 +261,10 @@ KATA_NODE=$(oc get nodes -l node-role.kubernetes.io/kata= \
   -o jsonpath='{.items[0].metadata.name}')
 
 oc debug node/$KATA_NODE -- chroot /host \
-  crictl info | grep -A 3 runtimes
+  sh -c 'crictl info | grep kata || echo "kata handler: NOT REGISTERED"'
 ----
 
-The `kata` handler is absent. After Section 3's verification step, the same command will show the kata handler registered — making the before/after change concrete.
+`kata handler: NOT REGISTERED`. The compact JSON from `crictl info` contains no `kata` entries yet. After Section 3's verification step, the same command will show kata handler strings in the output — making the before/after change concrete.
 
 === Re-add the `NoSchedule` Taint
 
