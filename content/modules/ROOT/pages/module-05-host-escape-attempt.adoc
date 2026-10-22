@@ -1,0 +1,250 @@
+= Build Pipeline — Host Escape Attempt
+
+== Value Proposition
+
+A CI/CD build pipeline is one of the highest-risk workloads on a shared platform. It runs code supplied by developers — or by external contributors — with root access inside the container, direct access to mounted secrets, and unrestricted network egress. In a traditional runc cluster, a malicious build script can write to the host kernel's sysrq interface, enumerate host kernel modules, or exploit a kernel vulnerability to escape the container entirely.
+
+This module simulates that threat. You deploy a privileged kata pod representing a build runner and execute two classic host-escape techniques from inside it. Both are absorbed by the kata guest VM boundary. The cluster nodes remain healthy and unmodified throughout.
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Deploy a privileged kata pod simulating a CI/CD build runner and confirm its runtime class
+* Write to `/proc/sysrq-trigger` from inside the kata pod and prove it has no effect on the host kernel
+* Compare kernel module namespaces between the guest VM and the host node to demonstrate module isolation
+* Verify node health after both escape attempts and explain why the cluster survived
+* Use the field decision tree to recommend kata for appropriate customer workloads
+
+== Section 1 — Deploy the Build Pod
+
+=== The Scenario
+
+A platform engineering team runs developer build jobs inside containers. One submitted build script contains an escape attempt. The build runner is a kata pod — privileged, to simulate a worst-case container configuration.
+
+=== Deploy
+
+. Deploy a privileged kata build pod:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kata-build
+  namespace: kata-test
+spec:
+  runtimeClassName: kata
+  tolerations:
+  - key: kata
+    value: "true"
+    effect: NoSchedule
+  containers:
+  - name: build
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sleep", "infinity"]
+    securityContext:
+      privileged: true
+EOF
+----
+
+. Wait for the pod to be Running:
++
+[source,bash,role=execute]
+----
+oc wait pod/kata-build -n kata-test --for=condition=Ready --timeout=120s
+----
+
+. Confirm it is running under the kata runtime:
++
+[source,bash,role=execute]
+----
+oc get pod kata-build -n kata-test -o jsonpath='{.spec.runtimeClassName}'
+----
++
+Output: `kata`. Despite `privileged: true`, the pod is running inside a KVM guest VM — not directly on the host kernel.
+
+== Section 2 — Escape Attempt 1: sysrq Trigger
+
+=== The Attack Surface
+
+On Linux, writing to `/proc/sysrq-trigger` lets a root process send commands directly to the running kernel: `b` reboots the machine, `c` triggers a crash dump, `o` powers off the system. A privileged runc container on a standard OpenShift node inherits the host's `/proc` filesystem — writing `b` to sysrq-trigger reboots the node.
+
+A kata pod has its own `/proc` provided by the guest VM kernel. sysrq commands go to the guest, not the host.
+
+=== Store the Kata Node Name
+
+. Store the kata node name for later checks:
++
+[source,bash,role=execute]
+----
+KATA_NODE=$(oc get nodes -l node-role.kubernetes.io/kata= \
+  -o jsonpath='{.items[0].metadata.name}')
+echo $KATA_NODE
+----
+
+=== Execute the Escape Attempt
+
+. Check that `/proc/sysrq-trigger` exists and is writable inside the pod:
++
+[source,bash,role=execute]
+----
+oc exec kata-build -n kata-test -- ls -la /proc/sysrq-trigger
+----
++
+Expected output:
++
+----
+--w------- 1 root root 0 ... /proc/sysrq-trigger
+----
++
+The file exists and is writable by root — the interface is present. An attacker scanning `/proc` would find it immediately.
+
+. Write the sysrq help command (`h`) to the trigger:
++
+[source,bash,role=execute]
+----
+oc exec kata-build -n kata-test -- \
+  sh -c 'echo h > /proc/sysrq-trigger && echo "sysrq write succeeded"'
+----
++
+`sysrq write succeeded`. The write was accepted. The `h` key dumps available sysrq commands to the kernel ring buffer — it is safe and non-destructive. The write went to the *guest VM kernel*, not the host.
+
+=== Confirm the Host Is Unaffected
+
+. Check the host node's kernel ring buffer for any sysrq activity from the pod:
++
+[source,bash,role=execute]
+----
+oc debug node/$KATA_NODE -- chroot /host dmesg | grep -i sysrq | tail -5
+----
++
+No sysrq output originating from the kata pod appears in the host dmesg. The host kernel ring buffer is clean. The sysrq write went to the guest VM's own dmesg — an isolated kernel instance that has no path to the host.
+
+[NOTE]
+====
+Writing `b` (reboot) to `/proc/sysrq-trigger` inside a kata pod reboots the *guest VM*, not the host node. The kata pod would enter `Error` or `CrashLoopBackOff`. Both kata worker nodes would remain `Ready`. In a privileged runc pod, the same write reboots the physical node, taking down every workload on it.
+====
+
+== Section 3 — Escape Attempt 2: Kernel Module Namespace
+
+=== The Attack Surface
+
+Kernel modules run in kernel space with full privileges. A loaded rootkit module gives an attacker complete control of the node — bypassing all namespace-level security, exfiltrating secrets from any pod on the node, and persisting across container restarts. A privileged runc container shares the host kernel's module namespace: it can enumerate loaded modules, and on a kernel with `CAP_SYS_MODULE`, it can attempt to insert its own.
+
+A kata pod sees only the guest VM's module namespace — a minimal set built from the RHCOS kernel during KataConfig installation. The host's modules are completely invisible.
+
+=== Compare Module Namespaces
+
+. Count the kernel modules visible inside the kata build pod:
++
+[source,bash,role=execute]
+----
+oc exec kata-build -n kata-test -- \
+  sh -c 'cat /proc/modules | wc -l'
+----
+
+. Count the kernel modules loaded on the host node:
++
+[source,bash,role=execute]
+----
+oc debug node/$KATA_NODE -- chroot /host sh -c 'cat /proc/modules | wc -l'
+----
++
+The host node loads significantly more modules than the kata guest VM. The guest runs a minimal module set. The delta represents host kernel subsystems — storage drivers, network plugins, virtualization infrastructure — that are completely unreachable from inside the pod.
+
+. Check for the KVM hypervisor module on the host and inside the pod:
++
+[source,bash,role=execute]
+----
+oc debug node/$KATA_NODE -- chroot /host sh -c 'grep "^kvm " /proc/modules | cut -d" " -f1'
+----
++
+Expected output: `kvm` — the host node has the KVM hypervisor module loaded (it is running the kata guest VMs).
+
+. Check for that same module from inside the kata pod:
++
+[source,bash,role=execute]
+----
+oc exec kata-build -n kata-test -- \
+  sh -c 'grep "[k]vm" /proc/modules || echo "kvm: NOT VISIBLE — guest kernel module namespace is isolated"'
+----
++
+`NOT VISIBLE`. The kata guest VM is running *inside* KVM — it cannot see the hypervisor module that is hosting it. The host kernel module namespace is opaque to the guest. An attacker inside the pod cannot enumerate, inspect, or load into the host kernel module space.
+
+== Section 4 — Verify Node Health
+
+After both escape attempts, confirm the cluster is undisturbed.
+
+. Check the kata node status:
++
+[source,bash,role=execute]
+----
+oc get nodes -l node-role.kubernetes.io/kata=
+----
++
+Both kata nodes show `Ready`. No restarts, no degraded conditions, no evictions.
+
+. Confirm node conditions are clean:
++
+[source,bash,role=execute]
+----
+oc get node $KATA_NODE -o jsonpath='{range .status.conditions[*]}{.type}={.status}{"\n"}{end}'
+----
++
+Expected output:
++
+----
+MemoryPressure=False
+DiskPressure=False
+PIDPressure=False
+Ready=True
+----
++
+All conditions are nominal. Both escape attempts were absorbed entirely by the kata guest VM boundary.
+
+. Clean up:
++
+[source,bash,role=execute]
+----
+oc delete pod kata-build -n kata-test
+oc delete namespace kata-test
+----
+
+== Summary
+
+=== What You Learned
+
+* **sysrq writes are contained in the guest VM.** A privileged kata pod can write to `/proc/sysrq-trigger`, but the command executes in the guest kernel. A reboot trigger would restart the guest VM, not the host node.
+* **Kernel module namespaces are isolated.** The kata guest VM sees only its own minimal module set. Host modules are not visible, not enumerable, and not accessible from inside the pod.
+* **Cluster nodes survive both attempts.** Both kata worker nodes remained `Ready` throughout. There was no node degradation, restart, or security event on the host.
+* **Privileged does not mean escaped.** `securityContext.privileged: true` in a kata pod grants root inside the guest VM, not on the host. The VM boundary absorbs the privilege grant.
+
+=== Decision Tree: When to Recommend Kata
+
+Does any workload run untrusted or externally-supplied code (build scripts, user functions, multi-tenant SaaS)?::
+*Yes* → Recommend kata. The VM boundary prevents an escape from the workload reaching host infrastructure.
+
+Are any tenants external to your organization — partners, ISV customers, or business-unit teams running untrusted workloads?::
+*Yes* → Recommend kata. Linux namespace isolation (runc) can be bypassed by a kernel exploit. The kata VM boundary cannot.
+
+Does your compliance framework require hardware-enforced workload isolation beyond Linux namespace controls?::
+*Yes* → Recommend kata. Regulated industries (FSI, healthcare, government) frequently cite kernel vulnerability exposure as a gap in namespace-only isolation.
+
+None of the above?::
+*runc is sufficient.* For internal workloads with trusted code and internal tenants, Linux namespaces carry lower overhead and simpler operations.
+
+=== Three Discovery Questions for a Customer Meeting
+
+*"Do any of your CI/CD pipelines execute developer-submitted or third-party build scripts?"*
+
+Build pipelines are the canonical kata use case. Developer code runs with root access in the build container. Kata ensures a compromised build step cannot escape to cluster infrastructure — as this module demonstrated.
+
+*"Do you have external tenants on your OpenShift clusters — business-unit customers, partners, or a platform you sell to external companies?"*
+
+External tenants cannot be assumed to be acting in good faith. Kernel namespace isolation can be bypassed by a kernel vulnerability. The kata VM boundary is enforced by KVM hardware and cannot be bypassed from software running inside the guest.
+
+*"Does your security or compliance team require workload isolation guarantees beyond Linux namespace controls?"*
+
+Regulated industries frequently cite kernel vulnerability exposure as a gap in namespace-only isolation. Kata provides the hardware-enforced boundary — and this lab provides the empirical evidence to show a customer exactly what that means.
