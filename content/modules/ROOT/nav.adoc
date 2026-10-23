@@ -5,3 +5,4 @@
 * xref:module-03-install-kata-break-fix.adoc[Module 3 : Install Kata, Break It, Fix It]
 * xref:module-04-proving-isolation.adoc[Module 4 : Proving Isolation: Kernel, Process, and Tenant Boundaries]
 * xref:module-05-host-escape-attempt.adoc[Module 5 : Build Pipeline - Host Escape Attempt]
+* xref:module-06-agent-sandbox.adoc[Module 6 (Optional) : AI Agent Code Execution Sandbox]

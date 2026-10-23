@@ -1,0 +1,302 @@
+= Optional: AI Agent Code Execution Sandbox
+
+[NOTE]
+====
+This is an optional module. Complete modules 01–05 before attempting it. You will need the kata node pool from module 02 and the `KATA_NODE` variable set from a running kata pod.
+====
+
+== Value Proposition
+
+An AI agent executing a tool call is a build pipeline with an LLM in the loop. The agent generates code, calls a shell, reads files, and writes results — without a human reviewing what runs before it runs. In a traditional runc cluster, one compromised or misbehaving agent can enumerate other tenants' processes, write to the host kernel's sysrq interface, and exfiltrate secrets from adjacent pods.
+
+Red Hat Build of Agent Sandbox uses kata containers as the isolation primitive for agentic workloads. Each agent executor runs inside a KVM guest VM. Tool calls execute inside that VM. The host kernel and adjacent tenants are unreachable.
+
+This module deploys a simulated agent code interpreter, executes tool calls that would compromise a runc cluster, and proves each one is absorbed by the kata VM boundary.
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Explain why AI agent tool execution requires VM-level isolation beyond Linux namespaces
+* Deploy an agent executor pod using the kata runtime on ARO HCP
+* Execute simulated agent tool calls that attempt host access and prove they are contained
+* Demonstrate cross-tenant agent isolation: two tenants' agents cannot see each other's processes
+* Map the agent sandbox pattern to regulated customer workloads (FSI, healthcare, multi-tenant SaaS AI)
+
+== Section 1 — The Agent Threat Model
+
+=== Why Namespaces Are Not Enough
+
+A Linux namespace gives a container a separate view of the process tree, filesystem, and network. It does not give it a separate kernel. An agent code interpreter running inside a runc container shares the host kernel with every other workload on the node.
+
+Consider what a code interpreter does:
+
+* Executes LLM-generated shell commands with root inside the container
+* Reads and writes files, including mounted secrets
+* Makes arbitrary network requests
+* Has access to `/proc`, `/sys`, and kernel interfaces
+
+A single kernel vulnerability in a high-privilege agent container exposes every pod on the node. In a multi-tenant AI platform — where different customers' agents run on the same node — Linux namespace isolation is the only barrier between tenants.
+
+=== The Kata Answer
+
+Each kata agent executor runs in its own KVM guest VM. The agent's tool calls, shell executions, and filesystem operations happen inside that VM. The guest has its own kernel. A kernel exploit, sysrq write, or rootkit module load stays inside the VM. The host node and adjacent tenants are unreachable from software running in the guest.
+
+== Section 2 — Deploy Agent Executor Pods
+
+=== Create the Agent Sandbox Namespace
+
+. Create an isolated namespace for the agent workloads:
++
+[source,bash,role=execute]
+----
+oc new-project agent-sandbox
+----
+
+=== Deploy Two Tenant Agent Pods
+
+Simulate a multi-tenant AI platform: two customers, each running an agent code interpreter, on the same kata node pool.
+
+. Deploy Tenant A's agent executor:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent-tenant-a
+  namespace: agent-sandbox
+  labels:
+    tenant: a
+spec:
+  runtimeClassName: kata
+  tolerations:
+  - key: kata
+    value: "true"
+    effect: NoSchedule
+  containers:
+  - name: executor
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sh", "-c", "while true; do echo tenant-a-workload-55555 > /dev/null; sleep 30; done"]
+    securityContext:
+      runAsUser: 0
+EOF
+----
+
+. Deploy Tenant B's agent executor:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent-tenant-b
+  namespace: agent-sandbox
+  labels:
+    tenant: b
+spec:
+  runtimeClassName: kata
+  tolerations:
+  - key: kata
+    value: "true"
+    effect: NoSchedule
+  containers:
+  - name: executor
+    image: registry.access.redhat.com/ubi9/ubi-minimal
+    command: ["sh", "-c", "while true; do echo tenant-b-workload-66666 > /dev/null; sleep 30; done"]
+    securityContext:
+      runAsUser: 0
+EOF
+----
+
+. Wait for both pods to be Ready:
++
+[source,bash,role=execute]
+----
+oc wait pod/agent-tenant-a pod/agent-tenant-b \
+  -n agent-sandbox --for=condition=Ready --timeout=120s
+----
+
+. Confirm both are running under the kata runtime:
++
+[source,bash,role=execute]
+----
+oc get pods -n agent-sandbox \
+  -o custom-columns='NAME:.metadata.name,RUNTIME:.spec.runtimeClassName,STATUS:.status.phase'
+----
++
+Expected output:
++
+----
+NAME             RUNTIME   STATUS
+agent-tenant-a   kata      Running
+agent-tenant-b   kata      Running
+----
+
+. Capture the kata node both pods landed on:
++
+[source,bash,role=execute]
+----
+KATA_NODE=$(oc get pod agent-tenant-a -n agent-sandbox -o jsonpath='{.spec.nodeName}')
+echo "Agent node: $KATA_NODE"
+----
+
+== Section 3 — Simulate Agent Tool Calls
+
+An agent code interpreter executes commands on behalf of an LLM. The following commands simulate what a malicious or misbehaving agent might attempt.
+
+=== Tool Call 1: Enumerate Adjacent Tenant Processes
+
+A compromised agent scanning `/proc` to find other tenants' workloads.
+
+. From inside Tenant A's executor, attempt to find Tenant B's process:
++
+[source,bash,role=execute]
+----
+oc exec agent-tenant-a -n agent-sandbox -- \
+  grep -a "[6]6666" /proc/*/cmdline 2>/dev/null \
+  || echo "NOT FOUND — tenant B process is not visible from tenant A"
+----
++
+`NOT FOUND`. Each kata pod runs in its own guest VM with its own PID namespace. Tenant A's agent cannot enumerate Tenant B's processes even though both run on the same physical node.
+
+=== Tool Call 2: Write to the Host Kernel sysrq Interface
+
+A malicious agent attempting to crash or reboot the node.
+
+. Write the sysrq help key from inside Tenant A's executor:
++
+[source,bash,role=execute]
+----
+oc exec agent-tenant-a -n agent-sandbox -- \
+  sh -c 'echo h > /proc/sysrq-trigger && echo "sysrq write accepted"'
+----
++
+`sysrq write accepted`. The write was accepted — the interface exists inside the guest VM. The command went to the guest kernel, not the host.
+
+. Confirm the host node's dmesg has no sysrq activity from the agent pod:
++
+[source,bash,role=execute]
+----
+oc debug node/$KATA_NODE -- chroot /host dmesg | grep -i sysrq | tail -5
+----
++
+Expected output: nothing (only the `oc debug` pod lifecycle lines). The host kernel ring buffer is clean. The agent's sysrq write was absorbed by the guest VM.
+
+=== Tool Call 3: Inspect Host Kernel Modules
+
+A rootkit attempting to identify the host environment and load a malicious module.
+
+. From inside the agent executor, check for the KVM hypervisor module:
++
+[source,bash,role=execute]
+----
+oc exec agent-tenant-a -n agent-sandbox -- \
+  sh -c 'grep "^kvm " /proc/modules || echo "kvm: NOT VISIBLE — host module namespace is isolated"'
+----
++
+`NOT VISIBLE`. The agent cannot enumerate, inspect, or load into the host kernel module space. The guest kernel module namespace is isolated from the host.
+
+[NOTE]
+====
+`ptp_kvm` may appear in the guest's `/proc/modules`. This is a paravirtualized clock driver the guest kernel loads for time synchronization. It is a guest-side driver, not the hypervisor. The `^kvm ` pattern targets only the exact `kvm` hypervisor module.
+====
+
+=== Tool Call 4: Attempt to Read Host Filesystem
+
+An agent attempting to access host credentials, tokens, or secrets outside its container.
+
+. From inside the agent executor, attempt to access the host root filesystem:
++
+[source,bash,role=execute]
+----
+oc exec agent-tenant-a -n agent-sandbox -- \
+  sh -c 'ls /host 2>/dev/null || echo "host filesystem: NOT ACCESSIBLE"'
+----
++
+`NOT ACCESSIBLE`. The agent's view of the filesystem is the guest VM's root. There is no `/host` path into the underlying node filesystem.
+
+== Section 4 — Verify Node Health
+
+After all four tool call simulations, confirm the cluster is undisturbed.
+
+. Check the kata node status:
++
+[source,bash,role=execute]
+----
+oc get nodes -l node-role.kubernetes.io/kata=
+----
++
+Both kata nodes show `Ready`. None of the agent tool calls affected the host nodes.
+
+. Confirm node conditions:
++
+[source,bash,role=execute]
+----
+oc get node $KATA_NODE \
+  -o jsonpath='{range .status.conditions[*]}{.type}={.status}{"\n"}{end}'
+----
++
+Expected output:
++
+----
+MemoryPressure=False
+DiskPressure=False
+PIDPressure=False
+Ready=True
+----
+
+. Confirm both tenant agent pods are still running:
++
+[source,bash,role=execute]
+----
+oc get pods -n agent-sandbox
+----
++
+Both pods show `Running`. Tenant B's workload was unaffected by Tenant A's tool calls.
+
+. Clean up:
++
+[source,bash,role=execute]
+----
+oc delete namespace agent-sandbox
+----
+
+== Summary
+
+=== What You Learned
+
+* **AI agent tool execution is untrusted code at scale.** LLM-generated tool calls run with root inside the executor container. Kata contains each execution inside a KVM guest VM, preventing any escape to the host kernel or adjacent tenants.
+* **Cross-tenant agent isolation is VM-enforced.** Two tenants' agent executors running on the same kata node cannot enumerate each other's processes. The isolation is not a Linux namespace policy — it is a hardware VM boundary.
+* **sysrq and kernel module attacks are absorbed by the guest.** An agent attempting to crash the node or load a rootkit module is limited to its own guest VM. The host kernel ring buffer and module namespace are completely opaque from inside the pod.
+* **The host node survives all four attack patterns.** All kata worker nodes remained `Ready` throughout. No host-level security event was triggered.
+
+=== When to Recommend Agent Sandbox + Kata
+
+Does the platform execute LLM-generated code (code interpreter, shell tool calls, function execution)?::
+*Yes* → Mandate kata for agent executor pods. Each tool call invocation is untrusted code that must not reach the host kernel.
+
+Does the platform serve multiple tenants (different customers, business units, or user tiers)?::
+*Yes* → Mandate kata. Linux namespace isolation between tenants can be bypassed by a kernel vulnerability. The kata VM boundary cannot.
+
+Does the workload process regulated data (PII, PHI, financial records) inside agent context windows or tool outputs?::
+*Yes* → Mandate kata. A compromised agent in a runc cluster can exfiltrate data from adjacent pods on the same node. Kata eliminates that lateral path.
+
+Is the agent workload internal-only with trusted code and no external tenants?::
+*runc may be sufficient.* Evaluate the risk of LLM-generated code execution against the overhead of kata VM startup latency for your workload pattern.
+
+=== Three Discovery Questions for a Customer Meeting
+
+*"When your AI agents execute tool calls or run a code interpreter, what is the isolation boundary between the agent and the host node?"*
+
+This question surfaces the gap. Most teams answer "a container" without knowing that the container shares the host kernel. Kata changes that answer to "a KVM virtual machine."
+
+*"Do multiple customers' or teams' AI workloads run on the same OpenShift nodes today, or is that on your roadmap?"*
+
+Multi-tenant AI platforms are the highest-value kata use case. Kernel namespace isolation between tenants can be bypassed. A kata VM boundary cannot — and this module provides the empirical evidence to demonstrate that to a customer.
+
+*"How does your security or compliance team think about the risk of LLM-generated code executing with root inside a container on a shared node?"*
+
+This reframes the conversation from "container security" (familiar, often dismissed) to "untrusted code execution isolation" (the actual threat model for agentic AI). Kata provides the hardware-enforced answer.
