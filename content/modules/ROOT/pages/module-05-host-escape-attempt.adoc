@@ -165,10 +165,15 @@ Expected output: `kvm` — the host node has the KVM hypervisor module loaded (i
 [source,bash,role=execute]
 ----
 oc exec kata-build -n kata-test -- \
-  sh -c 'grep "[k]vm" /proc/modules || echo "kvm: NOT VISIBLE — guest kernel module namespace is isolated"'
+  sh -c 'grep "^kvm " /proc/modules || echo "kvm: NOT VISIBLE — guest kernel module namespace is isolated"'
 ----
 +
 `NOT VISIBLE`. The kata guest VM is running *inside* KVM — it cannot see the hypervisor module that is hosting it. The host kernel module namespace is opaque to the guest. An attacker inside the pod cannot enumerate, inspect, or load into the host kernel module space.
++
+[NOTE]
+====
+`ptp_kvm` may appear in the guest's `/proc/modules` — this is a paravirtualized clock driver the *guest* kernel loads to synchronize time with the KVM hypervisor. It is a guest-side driver, not the hypervisor itself. The `^kvm ` pattern targets only the exact `kvm` hypervisor module, which is not visible from inside the guest.
+====
 
 == Section 4 — Verify Node Health
 
