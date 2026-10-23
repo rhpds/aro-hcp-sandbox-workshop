@@ -191,8 +191,9 @@ metadata:
   name: agent-pool
   namespace: agent-sandbox
 spec:
-  size: 3
-  sandboxTemplateName: kata-agent-executor
+  replicas: 3
+  sandboxTemplateRef:
+    name: kata-agent-executor
 EOF
 ----
 
@@ -203,7 +204,7 @@ EOF
 oc get sandboxwarmpool agent-pool -n agent-sandbox -w
 ----
 +
-Wait until `READY` matches `SIZE` (3/3). Each ready sandbox is a running kata pod — a KVM guest VM waiting to be claimed. Press Ctrl+C when the pool is full.
+Wait until the ready count matches `replicas` (3). Each ready sandbox is a running kata pod — a KVM guest VM waiting to be claimed. Press Ctrl+C when the pool is full.
 
 . Confirm three sandboxes are running under the kata runtime:
 +
