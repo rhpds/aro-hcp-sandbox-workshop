@@ -57,17 +57,57 @@ SandboxTemplate ──► SandboxWarmPool (maintains N ready Sandboxes)
 
 The warm pool eliminates cold-start latency. A `SandboxClaim` acquires a pre-warmed VM in milliseconds rather than waiting for a new kata pod to start.
 
-== Section 2 — Verify the Operator
+== Section 2 — Install the Operator
 
-. Confirm the Agent Sandbox operator is installed:
+. Create the operator namespace:
 +
 [source,bash,role=execute]
 ----
-oc get csv -n agent-sandbox-operator \
-  -o custom-columns='NAME:.metadata.name,PHASE:.status.phase'
+oc new-project agent-sandbox-operator
 ----
+
+. Create an OperatorGroup scoped to all namespaces:
 +
-Expected: operator CSV in `Succeeded` phase.
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: agent-sandbox-operator-group
+  namespace: agent-sandbox-operator
+spec: {}
+EOF
+----
+
+. Create the Subscription:
++
+[source,bash,role=execute]
+----
+oc apply -f - <<'EOF'
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: agent-sandbox-operator
+  namespace: agent-sandbox-operator
+spec:
+  channel: preview-0.9
+  name: agent-sandbox-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+----
+
+. Wait for the CSV to reach `Succeeded`:
++
+[source,bash,role=execute]
+----
+oc wait csv/agent-sandbox-operator.v0.9.0 \
+  -n agent-sandbox-operator \
+  --for=jsonpath='{.status.phase}'=Succeeded \
+  --timeout=300s
+----
 
 . Confirm the CRDs are registered:
 +
