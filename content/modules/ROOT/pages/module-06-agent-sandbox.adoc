@@ -127,12 +127,19 @@ Expected output includes `sandboxtemplates`, `sandboxwarmpools`, `sandboxclaims`
 oc new-project agent-sandbox
 ----
 
+. Inspect the SandboxTemplate spec fields:
++
+[source,bash,role=execute]
+----
+oc explain sandboxtemplate.spec
+----
+
 . Create a `SandboxTemplate` that pins the runtime class to kata:
 +
 [source,bash,role=execute]
 ----
 oc apply -f - <<'EOF'
-apiVersion: sandbox.redhat.io/v1alpha1
+apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
   name: kata-agent-executor
@@ -176,7 +183,7 @@ oc get sandboxtemplate kata-agent-executor -n agent-sandbox
 [source,bash,role=execute]
 ----
 oc apply -f - <<'EOF'
-apiVersion: sandbox.redhat.io/v1alpha1
+apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
 metadata:
   name: agent-pool
@@ -213,7 +220,7 @@ oc get sandboxes -n agent-sandbox \
 [source,bash,role=execute]
 ----
 oc apply -f - <<'EOF'
-apiVersion: sandbox.redhat.io/v1alpha1
+apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxClaim
 metadata:
   name: agent-session-01
