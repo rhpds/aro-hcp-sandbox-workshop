@@ -145,28 +145,30 @@ metadata:
   name: kata-agent-executor
   namespace: agent-sandbox
 spec:
-  runtimeClass: kata
-  tolerations:
-  - key: kata
-    value: "true"
-    effect: NoSchedule
-  containers:
-  - name: executor
-    image: registry.access.redhat.com/ubi9/ubi-minimal
-    command: ["sleep", "infinity"]
-    resources:
-      requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
-        memory: "512Mi"
-        cpu: "500m"
+  podTemplate:
+    spec:
+      runtimeClassName: kata
+      tolerations:
+      - key: kata
+        value: "true"
+        effect: NoSchedule
+      containers:
+      - name: executor
+        image: registry.access.redhat.com/ubi9/ubi-minimal
+        command: ["sleep", "infinity"]
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
 EOF
 ----
 +
 [NOTE]
 ====
-The `runtimeClass: kata` field in the `SandboxTemplate` is the single control point for the platform admin. Developers requesting sandboxes from this template automatically get kata VM isolation — with no knowledge of the runtime class themselves.
+The `runtimeClassName: kata` field inside `podTemplate.spec` is the single control point for the platform admin. Developers requesting sandboxes from this template automatically get kata VM isolation — with no knowledge of the runtime class themselves.
 ====
 
 . Confirm the template is accepted:
