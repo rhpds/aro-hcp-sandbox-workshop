@@ -1,76 +1,104 @@
-= Optional: AI Agent Code Execution Sandbox
+= Optional: Red Hat Build of Agent Sandbox
 
 [NOTE]
 ====
-This is an optional module. Complete modules 01–05 before attempting it. You will need the kata node pool from module 02 and the `KATA_NODE` variable set from a running kata pod.
+This is an optional module. Complete modules 01–05 before attempting it. The kata node pool from module 02 and the OpenShift Sandboxed Containers operator from module 03 must be installed and healthy.
 ====
 
 == Value Proposition
 
-An AI agent executing a tool call is a build pipeline with an LLM in the loop. The agent generates code, calls a shell, reads files, and writes results — without a human reviewing what runs before it runs. In a traditional runc cluster, one compromised or misbehaving agent can enumerate other tenants' processes, write to the host kernel's sysrq interface, and exfiltrate secrets from adjacent pods.
+Red Hat build of Agent Sandbox is a Kubernetes-native API layer that abstracts sandboxing technology from developers. Platform admins choose the runtime — including Kata Containers for VM-level isolation — and developers simply request a sandbox via a `SandboxClaim`. They never interact with pods, PVCs, or runtime classes directly.
 
-Red Hat Build of Agent Sandbox uses kata containers as the isolation primitive for agentic workloads. Each agent executor runs inside a KVM guest VM. Tool calls execute inside that VM. The host kernel and adjacent tenants are unreachable.
-
-This module deploys a simulated agent code interpreter, executes tool calls that would compromise a runc cluster, and proves each one is absorbed by the kata VM boundary.
+Without OpenShift Sandboxed Containers, Agent Sandbox delivers lifecycle management and fast provisioning. With Kata Containers enabled in the `SandboxTemplate`, every sandbox runs in a dedicated KVM guest VM. The same threat model from module 05 applies: a malicious AI agent executing a tool call, an injected build script, a rogue notebook — all are contained inside the VM. The host kernel and adjacent tenants are unreachable.
 
 == Learning Objectives
 
 By the end of this module you will be able to:
 
-* Explain why AI agent tool execution requires VM-level isolation beyond Linux namespaces
-* Deploy an agent executor pod using the kata runtime on ARO HCP
-* Execute simulated agent tool calls that attempt host access and prove they are contained
-* Demonstrate cross-tenant agent isolation: two tenants' agents cannot see each other's processes
-* Map the agent sandbox pattern to regulated customer workloads (FSI, healthcare, multi-tenant SaaS AI)
+* Describe the four Agent Sandbox CRDs and how they relate to each other
+* Create a `SandboxTemplate` that provisions kata-backed sandboxes
+* Create a `SandboxWarmPool` for near-instant sandbox allocation
+* Request a sandbox via `SandboxClaim` and execute workloads inside it
+* Demonstrate that the kata VM boundary contains agent-level attack patterns
+* Explain the difference between Agent Sandbox with and without OpenShift Sandboxed Containers
 
-== Section 1 — The Agent Threat Model
+== Section 1 — Agent Sandbox Architecture
 
-=== Why Namespaces Are Not Enough
+Agent Sandbox introduces four CRDs:
 
-A Linux namespace gives a container a separate view of the process tree, filesystem, and network. It does not give it a separate kernel. An agent code interpreter running inside a runc container shares the host kernel with every other workload on the node.
+[cols="1,3",options="header"]
+|===
+| CRD | Purpose
 
-Consider what a code interpreter does:
+| `SandboxTemplate`
+| Reusable blueprint: container image, runtime class, environment, networking policy. Platform admins own this.
 
-* Executes LLM-generated shell commands with root inside the container
-* Reads and writes files, including mounted secrets
-* Makes arbitrary network requests
-* Has access to `/proc`, `/sys`, and kernel interfaces
+| `SandboxWarmPool`
+| Maintains N pre-provisioned sandboxes from a template. Replenishes automatically when a sandbox is claimed.
 
-A single kernel vulnerability in a high-privilege agent container exposes every pod on the node. In a multi-tenant AI platform — where different customers' agents run on the same node — Linux namespace isolation is the only barrier between tenants.
+| `SandboxClaim`
+| A request for a sandbox from a warm pool. Supports TTL and auto-shutdown. Developers and agents create these.
 
-=== The Kata Answer
+| `Sandbox`
+| The running instance: a pod with stable identity, optional PVC and service. Managed by the controller.
+|===
 
-Each kata agent executor runs in its own KVM guest VM. The agent's tool calls, shell executions, and filesystem operations happen inside that VM. The guest has its own kernel. A kernel exploit, sysrq write, or rootkit module load stays inside the VM. The host node and adjacent tenants are unreachable from software running in the guest.
+=== Lifecycle Flow
 
-== Section 2 — Deploy Agent Executor Pods
+----
+SandboxTemplate ──► SandboxWarmPool (maintains N ready Sandboxes)
+                           │
+              SandboxClaim ◄─ developer/agent requests sandbox
+                           │
+              WarmPool releases Sandbox → replenishes pool
+                           │
+              SandboxClaim now references the running Sandbox
+----
 
-=== Create the Agent Sandbox Namespace
+The warm pool eliminates cold-start latency. A `SandboxClaim` acquires a pre-warmed VM in milliseconds rather than waiting for a new kata pod to start.
 
-. Create an isolated namespace for the agent workloads:
+== Section 2 — Verify the Operator
+
+. Confirm the Agent Sandbox operator is installed:
++
+[source,bash,role=execute]
+----
+oc get csv -n agent-sandbox-operator \
+  -o custom-columns='NAME:.metadata.name,PHASE:.status.phase'
+----
++
+Expected: operator CSV in `Succeeded` phase.
+
+. Confirm the CRDs are registered:
++
+[source,bash,role=execute]
+----
+oc get crd | grep sandbox
+----
++
+Expected output includes `sandboxtemplates`, `sandboxwarmpools`, `sandboxclaims`, and `sandboxes`.
+
+== Section 3 — Create a kata-backed SandboxTemplate
+
+. Create a namespace for the agent workloads:
 +
 [source,bash,role=execute]
 ----
 oc new-project agent-sandbox
 ----
 
-=== Deploy Two Tenant Agent Pods
-
-Simulate a multi-tenant AI platform: two customers, each running an agent code interpreter, on the same kata node pool.
-
-. Deploy Tenant A's agent executor:
+. Create a `SandboxTemplate` that pins the runtime class to kata:
 +
 [source,bash,role=execute]
 ----
 oc apply -f - <<'EOF'
-apiVersion: v1
-kind: Pod
+apiVersion: sandbox.redhat.io/v1alpha1
+kind: SandboxTemplate
 metadata:
-  name: agent-tenant-a
+  name: kata-agent-executor
   namespace: agent-sandbox
-  labels:
-    tenant: a
 spec:
-  runtimeClassName: kata
+  runtimeClass: kata
   tolerations:
   - key: kata
     value: "true"
@@ -78,189 +106,217 @@ spec:
   containers:
   - name: executor
     image: registry.access.redhat.com/ubi9/ubi-minimal
-    command: ["sh", "-c", "while true; do echo tenant-a-workload-55555 > /dev/null; sleep 30; done"]
-    securityContext:
-      runAsUser: 0
+    command: ["sleep", "infinity"]
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
 EOF
 ----
++
+[NOTE]
+====
+The `runtimeClass: kata` field in the `SandboxTemplate` is the single control point for the platform admin. Developers requesting sandboxes from this template automatically get kata VM isolation — with no knowledge of the runtime class themselves.
+====
 
-. Deploy Tenant B's agent executor:
+. Confirm the template is accepted:
++
+[source,bash,role=execute]
+----
+oc get sandboxtemplate kata-agent-executor -n agent-sandbox
+----
+
+== Section 4 — Create a SandboxWarmPool
+
+. Create a warm pool of three pre-provisioned kata sandboxes:
 +
 [source,bash,role=execute]
 ----
 oc apply -f - <<'EOF'
-apiVersion: v1
-kind: Pod
+apiVersion: sandbox.redhat.io/v1alpha1
+kind: SandboxWarmPool
 metadata:
-  name: agent-tenant-b
+  name: agent-pool
   namespace: agent-sandbox
-  labels:
-    tenant: b
 spec:
-  runtimeClassName: kata
-  tolerations:
-  - key: kata
-    value: "true"
-    effect: NoSchedule
-  containers:
-  - name: executor
-    image: registry.access.redhat.com/ubi9/ubi-minimal
-    command: ["sh", "-c", "while true; do echo tenant-b-workload-66666 > /dev/null; sleep 30; done"]
-    securityContext:
-      runAsUser: 0
+  size: 3
+  sandboxTemplateName: kata-agent-executor
 EOF
 ----
 
-. Wait for both pods to be Ready:
+. Watch the warm pool provision the sandboxes:
 +
 [source,bash,role=execute]
 ----
-oc wait pod/agent-tenant-a pod/agent-tenant-b \
-  -n agent-sandbox --for=condition=Ready --timeout=120s
+oc get sandboxwarmpool agent-pool -n agent-sandbox -w
 ----
++
+Wait until `READY` matches `SIZE` (3/3). Each ready sandbox is a running kata pod — a KVM guest VM waiting to be claimed. Press Ctrl+C when the pool is full.
 
-. Confirm both are running under the kata runtime:
+. Confirm three sandboxes are running under the kata runtime:
 +
 [source,bash,role=execute]
 ----
-oc get pods -n agent-sandbox \
-  -o custom-columns='NAME:.metadata.name,RUNTIME:.spec.runtimeClassName,STATUS:.status.phase'
-----
-+
-Expected output:
-+
-----
-NAME             RUNTIME   STATUS
-agent-tenant-a   kata      Running
-agent-tenant-b   kata      Running
+oc get sandboxes -n agent-sandbox \
+  -o custom-columns='NAME:.metadata.name,PHASE:.status.phase,NODE:.status.nodeName'
 ----
 
-. Capture the kata node both pods landed on:
+== Section 5 — Request and Use a Sandbox
+
+=== Simulate an AI Agent Requesting a Sandbox
+
+. Create a `SandboxClaim` with a 30-minute TTL — as an AI agent orchestrator would at the start of a session:
 +
 [source,bash,role=execute]
 ----
-KATA_NODE=$(oc get pod agent-tenant-a -n agent-sandbox -o jsonpath='{.spec.nodeName}')
-echo "Agent node: $KATA_NODE"
+oc apply -f - <<'EOF'
+apiVersion: sandbox.redhat.io/v1alpha1
+kind: SandboxClaim
+metadata:
+  name: agent-session-01
+  namespace: agent-sandbox
+spec:
+  sandboxWarmPoolName: agent-pool
+  ttl: 30m
+EOF
 ----
 
-== Section 3 — Simulate Agent Tool Calls
-
-An agent code interpreter executes commands on behalf of an LLM. The following commands simulate what a malicious or misbehaving agent might attempt.
-
-=== Tool Call 1: Enumerate Adjacent Tenant Processes
-
-A compromised agent scanning `/proc` to find other tenants' workloads.
-
-. From inside Tenant A's executor, attempt to find Tenant B's process:
+. Wait for the claim to be fulfilled:
 +
 [source,bash,role=execute]
 ----
-oc exec agent-tenant-a -n agent-sandbox -- \
-  grep -a "[6]6666" /proc/*/cmdline 2>/dev/null \
-  || echo "NOT FOUND — tenant B process is not visible from tenant A"
+oc wait sandboxclaim agent-session-01 -n agent-sandbox \
+  --for=condition=Ready --timeout=60s
 ----
-+
-`NOT FOUND`. Each kata pod runs in its own guest VM with its own PID namespace. Tenant A's agent cannot enumerate Tenant B's processes even though both run on the same physical node.
 
-=== Tool Call 2: Write to the Host Kernel sysrq Interface
-
-A malicious agent attempting to crash or reboot the node.
-
-. Write the sysrq help key from inside Tenant A's executor:
+. Confirm the warm pool immediately replenished:
 +
 [source,bash,role=execute]
 ----
-oc exec agent-tenant-a -n agent-sandbox -- \
-  sh -c 'echo h > /proc/sysrq-trigger && echo "sysrq write accepted"'
+oc get sandboxwarmpool agent-pool -n agent-sandbox
 ----
 +
-`sysrq write accepted`. The write was accepted — the interface exists inside the guest VM. The command went to the guest kernel, not the host.
+The pool is already back to 3 ready sandboxes. The next claim is fulfilled in milliseconds from the pre-warmed inventory.
 
-. Confirm the host node's dmesg has no sysrq activity from the agent pod:
+. Identify the sandbox backing this claim:
++
+[source,bash,role=execute]
+----
+SANDBOX_NAME=$(oc get sandboxclaim agent-session-01 -n agent-sandbox \
+  -o jsonpath='{.status.sandboxName}')
+echo "Sandbox: $SANDBOX_NAME"
+----
+
+. Capture the node the sandbox is running on:
++
+[source,bash,role=execute]
+----
+KATA_NODE=$(oc get sandbox $SANDBOX_NAME -n agent-sandbox \
+  -o jsonpath='{.status.nodeName}')
+echo "Kata node: $KATA_NODE"
+----
+
+== Section 6 — Security: Agent Tool Calls Inside the Kata Boundary
+
+This section executes the same attack patterns from module 05 — this time from inside an Agent Sandbox claim. The kata VM boundary applies identically.
+
+=== Scenario: Prompt Injection → Code Execution Attempt
+
+The article's threat model: a user sends a prompt that injects malicious instructions, the LLM generates a dangerous tool call, the agent executes it inside the sandbox. Without Kata Containers this breaks out to the host. With kata, it stays in the VM.
+
+. Write to the sysrq interface from inside the sandbox:
++
+[source,bash,role=execute]
+----
+oc exec -n agent-sandbox $SANDBOX_NAME -- \
+  sh -c 'echo h > /proc/sysrq-trigger && echo "sysrq write accepted (in guest VM)"'
+----
+
+. Confirm the host node's dmesg is clean:
 +
 [source,bash,role=execute]
 ----
 oc debug node/$KATA_NODE -- chroot /host dmesg | grep -i sysrq | tail -5
 ----
 +
-Expected output: nothing (only the `oc debug` pod lifecycle lines). The host kernel ring buffer is clean. The agent's sysrq write was absorbed by the guest VM.
+Expected output: nothing (only `oc debug` lifecycle lines). The sysrq write was absorbed by the guest VM kernel. The host is unaffected.
 
-=== Tool Call 3: Inspect Host Kernel Modules
-
-A rootkit attempting to identify the host environment and load a malicious module.
-
-. From inside the agent executor, check for the KVM hypervisor module:
+. Check for the KVM hypervisor module from inside the sandbox:
 +
 [source,bash,role=execute]
 ----
-oc exec agent-tenant-a -n agent-sandbox -- \
-  sh -c 'grep "^kvm " /proc/modules || echo "kvm: NOT VISIBLE — host module namespace is isolated"'
+oc exec -n agent-sandbox $SANDBOX_NAME -- \
+  sh -c 'grep "^kvm " /proc/modules || echo "kvm: NOT VISIBLE — host kernel is isolated"'
 ----
 +
-`NOT VISIBLE`. The agent cannot enumerate, inspect, or load into the host kernel module space. The guest kernel module namespace is isolated from the host.
+`NOT VISIBLE`. The sandbox cannot enumerate or access the host kernel module space. A rootkit loader has no path to the hypervisor.
 
-[NOTE]
-====
-`ptp_kvm` may appear in the guest's `/proc/modules`. This is a paravirtualized clock driver the guest kernel loads for time synchronization. It is a guest-side driver, not the hypervisor. The `^kvm ` pattern targets only the exact `kvm` hypervisor module.
-====
-
-=== Tool Call 4: Attempt to Read Host Filesystem
-
-An agent attempting to access host credentials, tokens, or secrets outside its container.
-
-. From inside the agent executor, attempt to access the host root filesystem:
+. Attempt to access the host filesystem:
 +
 [source,bash,role=execute]
 ----
-oc exec agent-tenant-a -n agent-sandbox -- \
+oc exec -n agent-sandbox $SANDBOX_NAME -- \
   sh -c 'ls /host 2>/dev/null || echo "host filesystem: NOT ACCESSIBLE"'
 ----
 +
-`NOT ACCESSIBLE`. The agent's view of the filesystem is the guest VM's root. There is no `/host` path into the underlying node filesystem.
+`NOT ACCESSIBLE`. The sandbox sees only the guest VM filesystem. Host credentials, tokens, and secrets are unreachable.
 
-== Section 4 — Verify Node Health
+=== Comparison: What Happens Without kata
 
-After all four tool call simulations, confirm the cluster is undisturbed.
+[cols="1,2,2",options="header"]
+|===
+| Attack pattern | Agent Sandbox (runc) | Agent Sandbox + OSC (kata)
 
-. Check the kata node status:
+| sysrq host reboot
+| Host node reboots, all pods evicted
+| Guest VM affected; host node `Ready`
+
+| KVM module enumeration
+| Host module namespace exposed
+| `NOT VISIBLE` — guest kernel only
+
+| Host filesystem access
+| Host paths accessible via `/proc/1/root`
+| Filesystem is guest VM root only
+
+| Adjacent tenant process scan
+| Tenant B's PIDs visible in `/proc`
+| Separate guest VM PID namespace
+|===
+
+== Section 7 — Verify Node Health and Clean Up
+
+. Confirm the kata node is healthy after all tool call simulations:
 +
 [source,bash,role=execute]
 ----
 oc get nodes -l node-role.kubernetes.io/kata=
 ----
 +
-Both kata nodes show `Ready`. None of the agent tool calls affected the host nodes.
+Both kata nodes show `Ready`. No host-level security event was triggered.
 
-. Confirm node conditions:
+. Confirm all warm pool sandboxes are still ready:
 +
 [source,bash,role=execute]
 ----
-oc get node $KATA_NODE \
-  -o jsonpath='{range .status.conditions[*]}{.type}={.status}{"\n"}{end}'
-----
-+
-Expected output:
-+
-----
-MemoryPressure=False
-DiskPressure=False
-PIDPressure=False
-Ready=True
+oc get sandboxwarmpool agent-pool -n agent-sandbox
 ----
 
-. Confirm both tenant agent pods are still running:
+. Delete the sandbox claim (TTL would auto-expire it, but clean up manually here):
 +
 [source,bash,role=execute]
 ----
-oc get pods -n agent-sandbox
+oc delete sandboxclaim agent-session-01 -n agent-sandbox
 ----
-+
-Both pods show `Running`. Tenant B's workload was unaffected by Tenant A's tool calls.
 
-. Clean up:
+. Delete the warm pool and namespace:
 +
 [source,bash,role=execute]
 ----
+oc delete sandboxwarmpool agent-pool -n agent-sandbox
 oc delete namespace agent-sandbox
 ----
 
@@ -268,35 +324,35 @@ oc delete namespace agent-sandbox
 
 === What You Learned
 
-* **AI agent tool execution is untrusted code at scale.** LLM-generated tool calls run with root inside the executor container. Kata contains each execution inside a KVM guest VM, preventing any escape to the host kernel or adjacent tenants.
-* **Cross-tenant agent isolation is VM-enforced.** Two tenants' agent executors running on the same kata node cannot enumerate each other's processes. The isolation is not a Linux namespace policy — it is a hardware VM boundary.
-* **sysrq and kernel module attacks are absorbed by the guest.** An agent attempting to crash the node or load a rootkit module is limited to its own guest VM. The host kernel ring buffer and module namespace are completely opaque from inside the pod.
-* **The host node survives all four attack patterns.** All kata worker nodes remained `Ready` throughout. No host-level security event was triggered.
+* **Agent Sandbox decouples sandbox policy from developer workflow.** Platform admins set `runtimeClass: kata` in the `SandboxTemplate` once. Every `SandboxClaim` from that template automatically gets VM-level isolation — transparently.
+* **Warm pools eliminate kata cold-start latency.** Sandboxes are pre-provisioned VMs. A `SandboxClaim` acquires one in milliseconds. The pool replenishes immediately.
+* **The kata VM boundary contains the agent threat model.** sysrq writes, kernel module enumeration, host filesystem access, and adjacent tenant process scans are all absorbed by the guest VM. The host and other tenants are unreachable.
+* **The security posture is additive.** Agent Sandbox without kata gives lifecycle management. Agent Sandbox with kata gives lifecycle management plus hardware-enforced isolation. The two are composed by a single field in the `SandboxTemplate`.
 
-=== When to Recommend Agent Sandbox + Kata
+=== Decision Tree: When to Recommend Agent Sandbox + kata
 
-Does the platform execute LLM-generated code (code interpreter, shell tool calls, function execution)?::
-*Yes* → Mandate kata for agent executor pods. Each tool call invocation is untrusted code that must not reach the host kernel.
+Does the platform execute AI agent tool calls, code interpreter requests, or LLM-generated shell commands?::
+*Yes* → Recommend Agent Sandbox with `runtimeClass: kata`. The warm pool handles provisioning; the kata VM handles isolation.
 
-Does the platform serve multiple tenants (different customers, business units, or user tiers)?::
-*Yes* → Mandate kata. Linux namespace isolation between tenants can be bypassed by a kernel vulnerability. The kata VM boundary cannot.
+Are multiple tenants (customers, teams, or users) sharing the same OpenShift cluster for AI workloads?::
+*Yes* → Mandate kata in the `SandboxTemplate`. Cross-tenant kernel namespace isolation (runc) can be bypassed by a kernel vulnerability. The kata VM boundary cannot.
 
-Does the workload process regulated data (PII, PHI, financial records) inside agent context windows or tool outputs?::
-*Yes* → Mandate kata. A compromised agent in a runc cluster can exfiltrate data from adjacent pods on the same node. Kata eliminates that lateral path.
+Is sandbox provisioning latency a concern (interactive notebooks, real-time code execution)?::
+*Yes* → `SandboxWarmPool` is the answer. Pre-warmed kata VMs are ready in milliseconds. Cold-start kata latency is eliminated entirely.
 
-Is the agent workload internal-only with trusted code and no external tenants?::
-*runc may be sufficient.* Evaluate the risk of LLM-generated code execution against the overhead of kata VM startup latency for your workload pattern.
+Is this an internal-only, single-tenant, trusted-code workload?::
+*Agent Sandbox without kata may be sufficient.* You still gain lifecycle management, TTL, and stable identity — without the overhead of VM-per-sandbox.
 
 === Three Discovery Questions for a Customer Meeting
 
-*"When your AI agents execute tool calls or run a code interpreter, what is the isolation boundary between the agent and the host node?"*
+*"When a developer or AI agent requests a code execution environment today, what is the isolation boundary — and who controls what runtime it uses?"*
 
-This question surfaces the gap. Most teams answer "a container" without knowing that the container shares the host kernel. Kata changes that answer to "a KVM virtual machine."
+Agent Sandbox separates those concerns: the developer gets a `SandboxClaim` API, the platform admin controls the `SandboxTemplate` and the runtime class. Kata isolation is enforced centrally, not per-workload.
 
-*"Do multiple customers' or teams' AI workloads run on the same OpenShift nodes today, or is that on your roadmap?"*
+*"How do you handle cold-start latency for isolated workloads like notebooks or code interpreters today?"*
 
-Multi-tenant AI platforms are the highest-value kata use case. Kernel namespace isolation between tenants can be bypassed. A kata VM boundary cannot — and this module provides the empirical evidence to demonstrate that to a customer.
+Warm pools are the differentiator. Pre-provisioned kata VMs ready in milliseconds is a significant operational improvement over spinning up a new VM per request.
 
-*"How does your security or compliance team think about the risk of LLM-generated code executing with root inside a container on a shared node?"*
+*"Have your security or compliance teams expressed concern about AI agents executing code in containers that share the host kernel?"*
 
-This reframes the conversation from "container security" (familiar, often dismissed) to "untrusted code execution isolation" (the actual threat model for agentic AI). Kata provides the hardware-enforced answer.
+This is the emerging conversation in regulated industries. Agent Sandbox + OpenShift Sandboxed Containers gives platform teams a single API surface with hardware-enforced isolation — and this module provides empirical evidence of what that means at the kernel level.
