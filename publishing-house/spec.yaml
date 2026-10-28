@@ -53,6 +53,10 @@ spec:
       title: "Build Pipeline — Host Escape Attempt"
       duration_min: 20
       status: complete
+    - id: module-06
+      title: "Optional: Red Hat Build of Agent Sandbox"
+      duration_min: 30
+      status: in_progress
   environment:
     platform: "ocp"            # ocp | rhel-vms — determines which sizing fields apply
     topology: "per-student"    # shared-cluster | per-student | cnv-pool
