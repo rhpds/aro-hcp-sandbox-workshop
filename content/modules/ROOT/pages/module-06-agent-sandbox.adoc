@@ -251,7 +251,7 @@ The pool is already back to 3 ready sandboxes. The next claim is fulfilled in mi
 [source,bash,role=execute]
 ----
 SANDBOX_NAME=$(oc get sandboxclaim agent-session-01 -n agent-sandbox \
-  -o jsonpath='{.status.sandboxName}')
+  -o jsonpath='{.status.sandbox.name}')
 echo "Sandbox: $SANDBOX_NAME"
 ----
 
@@ -272,22 +272,20 @@ This section executes the same attack patterns from module 05 — this time from
 
 The article's threat model: a user sends a prompt that injects malicious instructions, the LLM generates a dangerous tool call, the agent executes it inside the sandbox. Without Kata Containers this breaks out to the host. With kata, it stays in the VM.
 
-. Write to the sysrq interface from inside the sandbox:
+. Attempt to write to the sysrq interface from inside the sandbox:
 +
 [source,bash,role=execute]
 ----
 oc exec -n agent-sandbox $SANDBOX_NAME -- \
-  sh -c 'echo h > /proc/sysrq-trigger && echo "sysrq write accepted (in guest VM)"'
-----
-
-. Confirm the host node's dmesg is clean:
-+
-[source,bash,role=execute]
-----
-oc debug node/$KATA_NODE -- chroot /host dmesg | grep -i sysrq | tail -5
+  sh -c 'echo h > /proc/sysrq-trigger && echo "sysrq write accepted" || echo "sysrq write blocked"'
 ----
 +
-Expected output: nothing (only `oc debug` lifecycle lines). The sysrq write was absorbed by the guest VM kernel. The host is unaffected.
+Expected output: `sysrq write blocked` — `Read-only file system`. The default `SandboxTemplate` does not grant `privileged: true`, so the guest kernel denies the write at the filesystem level. The host node is not involved at all.
++
+[NOTE]
+====
+This is a stronger result than module 05, where `privileged: true` was explicitly set to simulate a worst-case build runner. In the default Agent Sandbox configuration, the sysrq interface is blocked by the unprivileged container policy *before* the kata VM boundary needs to act. Defense in depth: OS-level restriction plus VM-level isolation.
+====
 
 . Check for the KVM hypervisor module from inside the sandbox:
 +
