@@ -222,8 +222,10 @@ metadata:
   name: agent-session-01
   namespace: agent-sandbox
 spec:
-  sandboxWarmPoolName: agent-pool
-  ttl: 30m
+  warmPoolRef:
+    name: agent-pool
+  lifecycle:
+    ttlSecondsAfterFinished: 1800
 EOF
 ----
 
