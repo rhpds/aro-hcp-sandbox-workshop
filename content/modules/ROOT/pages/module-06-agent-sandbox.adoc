@@ -315,7 +315,7 @@ oc exec -n agent-sandbox $SANDBOX_NAME -- \
 
 | sysrq host reboot
 | Host node reboots, all pods evicted
-| Guest VM affected; host node `Ready`
+| Write blocked at OS level (unprivileged); host node `Ready`
 
 | KVM module enumeration
 | Host module namespace exposed
@@ -367,15 +367,15 @@ oc delete namespace agent-sandbox
 
 === What You Learned
 
-* **Agent Sandbox decouples sandbox policy from developer workflow.** Platform admins set `runtimeClass: kata` in the `SandboxTemplate` once. Every `SandboxClaim` from that template automatically gets VM-level isolation — transparently.
+* **Agent Sandbox decouples sandbox policy from developer workflow.** Platform admins set `runtimeClassName: kata` inside `podTemplate.spec` of the `SandboxTemplate` once. Every `SandboxClaim` from that template automatically gets VM-level isolation — transparently.
 * **Warm pools eliminate kata cold-start latency.** Sandboxes are pre-provisioned VMs. A `SandboxClaim` acquires one in milliseconds. The pool replenishes immediately.
-* **The kata VM boundary contains the agent threat model.** sysrq writes, kernel module enumeration, host filesystem access, and adjacent tenant process scans are all absorbed by the guest VM. The host and other tenants are unreachable.
+* **Defense in depth contains the agent threat model.** In the default unprivileged `SandboxTemplate`, sysrq writes are blocked at the OS level (Read-only file system) before the kata VM boundary even acts. Kernel module enumeration, host filesystem access, and adjacent tenant process scans are contained by the guest VM. The host and other tenants are unreachable.
 * **The security posture is additive.** Agent Sandbox without kata gives lifecycle management. Agent Sandbox with kata gives lifecycle management plus hardware-enforced isolation. The two are composed by a single field in the `SandboxTemplate`.
 
 === Decision Tree: When to Recommend Agent Sandbox + kata
 
 Does the platform execute AI agent tool calls, code interpreter requests, or LLM-generated shell commands?::
-*Yes* → Recommend Agent Sandbox with `runtimeClass: kata`. The warm pool handles provisioning; the kata VM handles isolation.
+*Yes* → Recommend Agent Sandbox with `runtimeClassName: kata` in the `SandboxTemplate`. The warm pool handles provisioning; the kata VM handles isolation.
 
 Are multiple tenants (customers, teams, or users) sharing the same OpenShift cluster for AI workloads?::
 *Yes* → Mandate kata in the `SandboxTemplate`. Cross-tenant kernel namespace isolation (runc) can be bypassed by a kernel vulnerability. The kata VM boundary cannot.
