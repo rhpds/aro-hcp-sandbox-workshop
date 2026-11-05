@@ -54,9 +54,9 @@ spec:
       duration_min: 20
       status: complete
     - id: module-06
-      title: "Optional: Red Hat Build of Agent Sandbox"
+      title: "Red Hat Build of Agent Sandbox"
       duration_min: 30
-      status: in_progress
+      status: complete
   environment:
     platform: "ocp"            # ocp | rhel-vms — determines which sizing fields apply
     topology: "per-student"    # shared-cluster | per-student | cnv-pool
