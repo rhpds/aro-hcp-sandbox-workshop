@@ -1,8 +1,8 @@
-= Optional: Red Hat Build of Agent Sandbox
+= Red Hat Build of Agent Sandbox
 
 [NOTE]
 ====
-This is an optional module. Complete modules 01–05 before attempting it. The kata node pool from module 02 and the OpenShift Sandboxed Containers operator from module 03 must be installed and healthy.
+Complete modules 01–05 before attempting this module. The kata node pool from module 02 and the OpenShift Sandboxed Containers operator from module 03 must be installed and healthy.
 ====
 
 == Value Proposition
