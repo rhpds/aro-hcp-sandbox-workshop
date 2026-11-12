@@ -26,6 +26,7 @@ class E2ETests(unittest.TestCase):
         other = MODULE.E2E({}, self.directory.name)
         self.assertNotEqual(self.runner.pool, other.pool)
         self.assertNotEqual(self.runner.pool, "kata-nodepool")
+        self.assertLessEqual(len(self.runner.pool.encode()), 15)
         self.assertTrue(self.runner.namespace.startswith("qa-e2e-"))
 
     def test_create_records_ownership_before_api_call(self):
@@ -67,6 +68,20 @@ class E2ETests(unittest.TestCase):
             with self.assertRaisesRegex(MODULE.CheckFailure, "Cleanup incomplete"):
                 self.runner.cleanup()
         self.assertEqual(delete.call_count, 2)
+
+    def test_nonexistent_pool_is_not_deleted_after_rejected_create(self):
+        self.runner.own("AzureNodePool", self.runner.pool)
+        with patch.object(self.runner, "az", return_value=[]), patch.object(self.runner, "command") as command:
+            self.runner.cleanup()
+        command.assert_not_called()
+
+    def test_pool_with_different_ownership_tag_is_not_deleted(self):
+        self.runner.own("AzureNodePool", self.runner.pool)
+        with patch.object(self.runner, "az", return_value=[{"name": self.runner.pool, "tags": {}}]), \
+             patch.object(self.runner, "command") as command:
+            with self.assertRaisesRegex(MODULE.CheckFailure, "Cleanup incomplete"):
+                self.runner.cleanup()
+        command.assert_not_called()
 
     def test_failed_prerequisite_is_skipped_not_reported_as_pass(self):
         self.runner.result("first", "First", lambda: (_ for _ in ()).throw(MODULE.CheckFailure("broken")))

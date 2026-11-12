@@ -37,7 +37,8 @@ class E2E(Healthcheck):
         self.directory = Path(directory)
         self.run_id = uuid.uuid4().hex[:10]
         self.namespace = "qa-e2e-" + self.run_id
-        self.pool = "qa-kata-" + self.run_id
+        # ARO HCP NodePool IDs must fit the 15-byte service limit.
+        self.pool = "qa-kata-" + self.run_id[:6]
         self.kataconfig = "qa-kata-" + self.run_id
         self.results = []
         self.state = {"run_id": self.run_id, "namespace": self.namespace,
@@ -180,6 +181,8 @@ class E2E(Healthcheck):
         self.command("az", "aro", "hcp", "cluster", "nodepool", "create", *self.cluster_args(),
                      "--name", self.pool, "--vm-size", "Standard_D4s_v5", "--replicas", "2",
                      "--version", version, "--channel-group", "stable", "--no-wait",
+                     "--labels", json.dumps([{"key": LABEL, "value": self.run_id}]),
+                     "--tags", json.dumps({"workshop-qa-run": self.run_id}),
                      "--only-show-errors", "--output", "none", timeout=120)
         return "Requested two Standard_D4s_v5 workers using the baseline OpenShift version"
 
@@ -225,7 +228,9 @@ class E2E(Healthcheck):
         self.wait("Kata NodePool provisioning", provisioned,
                   timeout=int(self.config.get("nodepool_timeout", 1200)), interval=15)
         def joined():
-            nodes = [n for n in self.objects("nodes") if n["metadata"]["name"] not in self.state["baseline_nodes"]]
+            nodes = [n for n in self.objects("nodes")
+                     if n["metadata"].get("labels", {}).get(LABEL) == self.run_id
+                     and n["metadata"]["name"] not in self.state["baseline_nodes"]]
             if len(nodes) > 2:
                 raise CheckFailure("More than two new nodes appeared; refusing ambiguous node ownership")
             if len(nodes) != 2 or not all(ready(n) for n in nodes):
@@ -301,10 +306,10 @@ class E2E(Healthcheck):
                 kc = self.oc_json("get", "kataconfig", self.kataconfig)
                 status = kc.get("status", {})
                 details = status.get("kataNodes", {})
-                if details.get("failed"):
+                if details.get("failedToInstall"):
                     raise CheckFailure("KataConfig reports failed nodes; inspect OSC installation logs")
                 # Check authoritative status counters, not just an empty success list.
-                completed = status.get("completed", details.get("completedNodeCount", 0))
+                completed = status.get("completed", details.get("readyNodeCount", 0))
                 total = status.get("total", details.get("nodeCount", 0))
                 return int(completed or 0) == 2 and int(total or 0) == 2
             self.wait("KataConfig completion on both nodes", installed,
@@ -538,6 +543,12 @@ class E2E(Healthcheck):
                         lambda: self.optional("namespace", ns) is None, timeout=300))
         if any(o["kind"] == "AzureNodePool" for o in owned):
             def remove_pool():
+                pools = self.az("aro", "hcp", "cluster", "nodepool", "list", *self.cluster_args())
+                matching = [pool for pool in pools if pool["name"] == self.pool]
+                if not matching:
+                    return
+                if matching[0].get("tags", {}).get("workshop-qa-run") != self.run_id:
+                    raise CheckFailure("NodePool ownership tag differs; refusing deletion")
                 self.command("az", "aro", "hcp", "cluster", "nodepool", "delete", *self.cluster_args(),
                              "--name", self.pool, "--yes", "--no-wait", "--only-show-errors", timeout=120)
                 self.wait("Azure NodePool deletion", lambda: not any(
