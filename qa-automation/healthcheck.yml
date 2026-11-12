@@ -89,22 +89,12 @@
       ansible.builtin.set_fact:
         healthcheck_report: "{{ healthcheck_probe.stdout | from_json }}"
 
-    - name: Report each readiness result
+    - name: Final healthcheck summary
       ansible.builtin.debug:
-        msg: "{{ 'PASS' if item.passed else 'FAIL' }} | {{ item.name }} | {{ item.message }}"
-      loop: "{{ healthcheck_report.checks }}"
-      loop_control:
-        label: "{{ item.name }}"
-
-    - name: Report overall readiness without failing playbook execution
-      ansible.builtin.debug:
-        msg:
-          - >-
-            {{ 'PASS' if healthcheck_report.healthy else 'FAIL' }} | Overall readiness |
-            {{ healthcheck_report.checks | selectattr('passed') | list | length }} passed,
-            {{ healthcheck_report.checks | rejectattr('passed') | list | length }} failed.
-          - >-
-            {{ 'Workshop environment is ready. Kata and Agent Sandbox installation remain learner exercises.'
-               if healthcheck_report.healthy else
-               'Failed checks: ' ~ (healthcheck_report.checks | rejectattr('passed') | map(attribute='name') | join(', ')) ~
-               '. See the FAIL results above. Playbook execution completed; the environment is not ready.' }}
+        msg: "{{ readiness_summary.splitlines() | reject('equalto', '') | list }}"
+      vars:
+        readiness_summary: |-
+          {% for check in healthcheck_report.checks %}
+          {{ 'PASS' if check.passed else 'FAIL' }} | {{ check.name }} | {{ check.message.splitlines() | join(' ') }}
+          {% endfor %}
+          {{ 'PASS' if healthcheck_report.healthy else 'FAIL' }} | Overall readiness | {{ healthcheck_report.checks | selectattr('passed') | list | length }} passed, {{ healthcheck_report.checks | rejectattr('passed') | list | length }} failed.

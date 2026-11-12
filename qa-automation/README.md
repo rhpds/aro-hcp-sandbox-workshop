@@ -85,7 +85,8 @@ For a manual run, supply a protected user-data file (do not commit it):
 ansible-playbook qa-automation/healthcheck.yml -e @/secure/path/user_data.yml
 ```
 
-The output lists every PASS/FAIL and an overall PASS/FAIL summary with counts.
+The final summary groups all results together: one line per check containing
+PASS/FAIL, its name, and a short detail, followed by overall PASS/FAIL and counts.
 Unhealthy checks do not fail playbook execution: Showroom's "Completed
 successfully" means the checks finished, not that the environment is healthy.
 Read the overall readiness summary to determine environment health. Missing
