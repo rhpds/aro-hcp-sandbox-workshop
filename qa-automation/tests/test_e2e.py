@@ -84,18 +84,32 @@ class E2ETests(unittest.TestCase):
 
     def test_cleanup_deletes_only_owned_namespace(self):
         self.runner.own("Namespace", self.runner.namespace)
-        with patch.object(self.runner, "delete") as delete, patch.object(self.runner, "optional", return_value=None):
+        with patch.object(self.runner, "delete_owned") as delete, patch.object(self.runner, "optional", return_value=None):
             self.runner.cleanup()
         delete.assert_called_once_with("namespace", self.runner.namespace)
 
     def test_cleanup_continues_after_one_failure(self):
         self.runner.own("Namespace", self.runner.namespace)
         self.runner.own("Namespace", MODULE.AGENT)
-        with patch.object(self.runner, "delete", side_effect=[MODULE.CheckFailure("failed"), None]) as delete, \
+        with patch.object(self.runner, "delete_owned", side_effect=[MODULE.CheckFailure("failed"), None]) as delete, \
              patch.object(self.runner, "optional", return_value=None):
             with self.assertRaisesRegex(MODULE.CheckFailure, "Cleanup incomplete"):
                 self.runner.cleanup()
         self.assertEqual(delete.call_count, 2)
+
+    def test_mismatched_kubernetes_owner_is_not_deleted(self):
+        with patch.object(self.runner, "optional", return_value={"metadata": {"labels": {}}}), \
+             patch.object(self.runner, "delete") as delete:
+            with self.assertRaisesRegex(MODULE.CheckFailure, "Ownership label differs"):
+                self.runner.delete_owned("namespace", MODULE.OSC)
+        delete.assert_not_called()
+
+    def test_matching_kubernetes_owner_can_be_deleted(self):
+        resource = {"metadata": {"labels": {MODULE.LABEL: self.runner.run_id}}}
+        with patch.object(self.runner, "optional", return_value=resource), \
+             patch.object(self.runner, "delete") as delete:
+            self.runner.delete_owned("namespace", self.runner.namespace)
+        delete.assert_called_once_with("namespace", self.runner.namespace)
 
     def test_nonexistent_pool_is_not_deleted_after_rejected_create(self):
         self.runner.own("AzureNodePool", self.runner.pool)
@@ -124,6 +138,16 @@ class E2ETests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertNotIn("private-password", json.dumps(result))
         self.assertNotIn("secret", result["message"])
+
+    def test_new_scheduler_event_can_omit_taint_key(self):
+        event = {"reason": "FailedScheduling", "message": "2 node(s) had untolerated taint(s)"}
+        responses = [{"scheduling": {}}, {"spec": {}}, {"items": [event]}]
+        def predicate(description, function, **kwargs):
+            self.assertTrue(function())
+        with patch.object(self.runner, "pod"), \
+             patch.object(self.runner, "oc_json", side_effect=responses), \
+             patch.object(self.runner, "wait", side_effect=predicate):
+            self.assertIn("Pending", self.runner.scheduling_failure())
 
     def test_timeout_is_bounded(self):
         with patch.object(MODULE.time, "monotonic", side_effect=[0, 1]):

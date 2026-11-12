@@ -96,6 +96,14 @@ class E2E(Healthcheck):
             args += ["-n", namespace]
         self.oc(*args)
 
+    def delete_owned(self, kind, name):
+        resource = self.optional(kind, name)
+        if resource is None:
+            return
+        if resource.get("metadata", {}).get("labels", {}).get(LABEL) != self.run_id:
+            raise CheckFailure("Ownership label differs; refusing deletion of " + kind + " " + name)
+        self.delete(kind, name)
+
     def wait(self, description, predicate, timeout=300, interval=5):
         deadline = time.monotonic() + timeout
         while True:
@@ -363,7 +371,10 @@ class E2E(Healthcheck):
                 raise CheckFailure("Pod without toleration unexpectedly scheduled")
             events = self.oc_json("get", "events", "-n", self.namespace,
                                   "--field-selector=involvedObject.name=missing-toleration")["items"]
-            return any(e.get("reason") == "FailedScheduling" and "kata" in e.get("message", "")
+            # Newer schedulers omit the taint key from this event message.
+            # The test creates the known Kata taint and a pod without its
+            # toleration; require the semantic failure, not version-specific text.
+            return any(e.get("reason") == "FailedScheduling"
                        and "untolerated taint" in e.get("message", "") for e in events)
         self.wait("expected untolerated Kata taint event", expected, timeout=90)
         return "Missing toleration leaves pod Pending with the expected FailedScheduling event"
@@ -534,19 +545,19 @@ class E2E(Healthcheck):
                 errors.append(description)
         # Delete workloads before uninstalling their controllers.
         if any(o["kind"] == "Namespace" and o["name"] == self.namespace for o in owned):
-            attempt("workload namespace deletion", lambda: self.delete("namespace", self.namespace))
+            attempt("workload namespace deletion", lambda: self.delete_owned("namespace", self.namespace))
             attempt("workload namespace termination", lambda: self.wait("workload namespace deletion",
                     lambda: self.optional("namespace", self.namespace) is None, timeout=300))
         if any(o["kind"] == "KataConfig" for o in owned):
             # The uninstall DaemonSet also needs access to the tainted QA nodes.
             for node in self.state["nodes"]:
                 attempt("temporary Kata taint removal", lambda n=node: self.oc("adm", "taint", "node", n, "kata:NoSchedule-"))
-            attempt("KataConfig deletion", lambda: self.delete("kataconfig", self.kataconfig))
+            attempt("KataConfig deletion", lambda: self.delete_owned("kataconfig", self.kataconfig))
             attempt("KataConfig uninstall", lambda: self.wait("KataConfig uninstall",
                     lambda: self.optional("kataconfig", self.kataconfig) is None, timeout=600))
         for namespace in (AGENT, OSC):
             if any(o["kind"] == "Namespace" and o["name"] == namespace for o in owned):
-                attempt(namespace + " deletion", lambda ns=namespace: self.delete("namespace", ns))
+                attempt(namespace + " deletion", lambda ns=namespace: self.delete_owned("namespace", ns))
                 attempt(namespace + " termination", lambda ns=namespace: self.wait(ns + " deletion",
                         lambda: self.optional("namespace", ns) is None, timeout=300))
         if any(o["kind"] == "AzureNodePool" for o in owned):
