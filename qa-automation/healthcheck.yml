@@ -1,15 +1,108 @@
 ---
-# HEALTHCHECK — Quick environment readiness check
-# Runs post-provisioning to verify the lab environment is functional.
-# Should complete in under 60 seconds.
-#
-# Exit 0 = healthy, non-zero = unhealthy.
+# Quick post-provisioning readiness check. Target runtime: under 60 seconds.
+# Showroom injects user_data.yml as extra vars. No credentials belong in this file.
+# Uses the learner's existing Azure session and kubeconfig on the bastion.
+# Does not install Kata or Agent Sandbox, or run the participant exercises.
 
-- name: "Environment Health Check"
+- name: Prepare the learner bastion healthcheck
   hosts: localhost
   connection: local
   gather_facts: false
   tasks:
-    - name: "TODO: Implement health checks"
+    - name: Validate required Showroom user-data fields
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.vars', item, default='') | string | length > 0
+        quiet: true
+        fail_msg: "Required Showroom variable is missing: {{ item }}"
+      loop:
+        - aro_hcp_cluster_location
+        - aro_hcp_cluster_managed_rg
+        - aro_hcp_cluster_name
+        - aro_hcp_cluster_rg
+        - bastion_public_hostname
+        - bastion_ssh_user_name
+        - bastion_ssh_password
+        - keycloak_url
+        - openshift_admin_user
+        - openshift_admin_password
+        - openshift_api_url
+        - openshift_console_url
+
+    - name: Add the learner bastion to the in-memory inventory
+      ansible.builtin.add_host:
+        name: workshop_healthcheck_bastion
+        groups: workshop_healthcheck
+        ansible_host: "{{ bastion_public_hostname }}"
+        ansible_port: "{{ bastion_ssh_port | default(22) }}"
+        ansible_user: "{{ bastion_ssh_user_name }}"
+        ansible_password: "{{ bastion_ssh_password }}"
+        ansible_connection: ssh
+        ansible_connect_timeout: 10
+        # Accept only new hosts; fail if a known bastion host key changes.
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
+      changed_when: false
+      no_log: true
+
+- name: Verify the workshop starting environment
+  hosts: workshop_healthcheck
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Run concurrent read-only readiness probes as the learner bastion user
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "{{ lookup('ansible.builtin.file', playbook_dir + '/files/healthcheck.py') }}"
+        stdin: >-
+          {{ {
+            'aro_hcp_cluster_location': aro_hcp_cluster_location,
+            'aro_hcp_cluster_managed_rg': aro_hcp_cluster_managed_rg,
+            'aro_hcp_cluster_name': aro_hcp_cluster_name,
+            'aro_hcp_cluster_rg': aro_hcp_cluster_rg,
+            'azure_subscription': azure_subscription | default(''),
+            'keycloak_url': keycloak_url,
+            'keycloak_realm': healthcheck_keycloak_realm | default('openshift'),
+            'keycloak_client_id': healthcheck_keycloak_client_id | default('openshift-console'),
+            'openshift_admin_user': openshift_admin_user,
+            'openshift_admin_password': openshift_admin_password,
+            'openshift_api_url': openshift_api_url,
+            'openshift_console_url': openshift_console_url,
+            'minimum_workers': healthcheck_minimum_workers | default(2),
+            'timeout': healthcheck_request_timeout | default(10)
+          } | to_json }}
+      register: healthcheck_probe
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Require a valid probe report without exposing command arguments
+      ansible.builtin.assert:
+        that:
+          - healthcheck_probe.rc | default(-1) in [0, 1]
+          - healthcheck_probe.stdout | default('') is match('^\{"checks":')
+        fail_msg: "Healthcheck could not run. Verify python3 and SSH access on the bastion."
+        quiet: true
+
+    - name: Parse the sanitized healthcheck report
+      ansible.builtin.set_fact:
+        healthcheck_report: "{{ healthcheck_probe.stdout | from_json }}"
+
+    - name: Report each readiness result
       ansible.builtin.debug:
-        msg: "Replace this task with checks that verify the environment is ready"
+        msg: "{{ 'PASS' if item.passed else 'FAIL' }} | {{ item.name }} | {{ item.message }}"
+      loop: "{{ healthcheck_report.checks }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Require a healthy workshop starting environment
+      ansible.builtin.assert:
+        that:
+          - healthcheck_report.healthy | bool
+        quiet: true
+        success_msg: "Workshop environment is ready. Kata and Agent Sandbox installation remain learner exercises."
+        fail_msg: >-
+          Environment is not ready. Failed checks:
+          {{ healthcheck_report.checks | rejectattr('passed') | map(attribute='name') | join(', ') }}.
+          See the FAIL results above; this healthcheck does not modify or repair the cluster.
