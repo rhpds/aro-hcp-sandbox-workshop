@@ -407,9 +407,10 @@ class E2E(Healthcheck):
             node = self.state["nodes"][0] if kata else next(iter(self.state["baseline_nodes"]))
             self.pod(name, kata=kata, privileged=not kata, host_pid=not kata, node=node, sleep=sleep)
             self.pod_ready(name)
+        own = self.execute("kata-a", "if grep -aq '[1]1111' /proc/[0-9]*/cmdline 2>/dev/null; then echo VISIBLE; else echo MISSING; fi")
         kata = self.execute("kata-a", "if grep -aq '[2]2222' /proc/[0-9]*/cmdline 2>/dev/null; then echo VISIBLE; else echo ISOLATED; fi")
         runc = self.execute("runc-a", "if grep -aq '[4]4444' /proc/[0-9]*/cmdline 2>/dev/null; then echo VISIBLE; else echo ISOLATED; fi")
-        if kata != "ISOLATED" or runc != "VISIBLE":
+        if own != "VISIBLE" or kata != "ISOLATED" or runc != "VISIBLE":
             raise CheckFailure("Cross-tenant PID inspection did not show the expected contrast")
         # Free guest VM capacity before the warm pool test.
         for name in ("kata-a", "kata-b", "runc-a", "runc-b", "runc-kernel"):
@@ -515,8 +516,8 @@ class E2E(Healthcheck):
 
     def agent_security(self):
         pod = self.state["agent_pod"]
-        sysrq = self.execute(pod, "if (echo h > /proc/sysrq-trigger) 2>/dev/null; then echo WRITABLE; else echo BLOCKED; fi")
-        module = self.execute(pod, "if grep -q '^kvm ' /proc/modules; then echo VISIBLE; else echo ISOLATED; fi")
+        sysrq = self.execute(pod, "test -e /proc/sysrq-trigger && { if (echo h > /proc/sysrq-trigger) 2>/dev/null; then echo WRITABLE; else echo BLOCKED; fi; }")
+        module = self.execute(pod, "test -r /proc/modules && { if grep -q '^kvm ' /proc/modules; then echo VISIBLE; else echo ISOLATED; fi; }")
         filesystem = self.execute(pod, "if test -e /host; then echo VISIBLE; else echo ABSENT; fi")
         if (sysrq, module, filesystem) != ("BLOCKED", "ISOLATED", "ABSENT"):
             raise CheckFailure("Default agent sandbox did not meet the expected sysrq/module/host-mount restrictions")
