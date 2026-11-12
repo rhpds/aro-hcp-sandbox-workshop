@@ -48,6 +48,34 @@ class E2ETests(unittest.TestCase):
                 self.runner.install_operator(MODULE.OSC, "operator", "stable")
             create.assert_not_called()
 
+    def test_operator_waits_for_installplan_after_csv_succeeds(self):
+        with patch.object(self.runner, "optional", return_value=None), \
+             patch.object(self.runner, "create"), patch.object(self.runner, "wait_csv"), \
+             patch.object(self.runner, "wait", return_value=True) as wait:
+            self.runner.install_operator(MODULE.OSC, "operator", "stable")
+        self.assertIn("completed InstallPlan", wait.call_args.args[0])
+
+    def test_installed_kataconfig_uses_ready_node_count(self):
+        self.runner.state["nodes"] = ["qa-node-a", "qa-node-b"]
+        def predicate(description, function, **kwargs):
+            self.assertTrue(function())
+        with patch.object(self.runner, "oc") as oc, patch.object(self.runner, "create"), \
+             patch.object(self.runner, "oc_json", return_value={"status": {"kataNodes": {"readyNodeCount": 2, "nodeCount": 2}}}), \
+             patch.object(self.runner, "wait", side_effect=predicate):
+            self.assertIn("completed", self.runner.kata_install())
+        self.assertEqual(sum("--overwrite" in call.args for call in oc.call_args_list), 2)
+
+    def test_failed_kata_install_restores_node_taints(self):
+        self.runner.state["nodes"] = ["qa-node-a", "qa-node-b"]
+        def predicate(description, function, **kwargs):
+            function()
+        with patch.object(self.runner, "oc") as oc, patch.object(self.runner, "create"), \
+             patch.object(self.runner, "oc_json", return_value={"status": {"kataNodes": {"failedToInstall": ["qa-node-a"]}}}), \
+             patch.object(self.runner, "wait", side_effect=predicate):
+            with self.assertRaisesRegex(MODULE.CheckFailure, "failed nodes"):
+                self.runner.kata_install()
+        self.assertEqual(sum("--overwrite" in call.args for call in oc.call_args_list), 2)
+
     def test_empty_cleanup_never_deletes_resources(self):
         with patch.object(self.runner, "delete") as delete, patch.object(self.runner, "command") as command:
             self.runner.cleanup()

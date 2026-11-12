@@ -203,9 +203,11 @@ class E2E(Healthcheck):
                      "spec": {"channel": channel, "installPlanApproval": "Automatic", "name": package,
                               "source": "redhat-operators", "sourceNamespace": "openshift-marketplace"}})
         self.wait_csv(namespace, package)
-        plans = self.objects("installplan", namespace)
-        if not any(p.get("status", {}).get("phase") == "Complete" for p in plans):
-            raise CheckFailure("Operator CSV succeeded but no completed InstallPlan was found")
+        # CSV status and InstallPlan status are reconciled independently. A CSV
+        # can become Succeeded just before OLM marks its InstallPlan Complete.
+        self.wait(package + " completed InstallPlan", lambda: any(
+            p.get("status", {}).get("phase") == "Complete"
+            for p in self.objects("installplan", namespace)), timeout=180)
         return "Subscription, completed InstallPlan and Succeeded CSV verified"
 
     def wait_csv(self, namespace, package):
@@ -472,8 +474,12 @@ class E2E(Healthcheck):
         self.create({"apiVersion": "extensions.agents.x-k8s.io/v1beta1", "kind": "SandboxWarmPool",
                      "metadata": {"name": "agent-pool", "namespace": self.namespace},
                      "spec": {"replicas": 3, "sandboxTemplateRef": {"name": "kata-executor"}}})
-        self.wait("three ready Kata sandboxes", lambda: self.ready_sandbox_pods(3), timeout=300)
+        self.wait("three ready Kata sandboxes", lambda: self.pool_ready() and self.ready_sandbox_pods(3), timeout=300)
         return "Three pre-warmed sandboxes have Ready Kata pods on run-owned workers"
+
+    def pool_ready(self):
+        pool = self.oc_json("get", "sandboxwarmpool", "agent-pool", "-n", self.namespace)
+        return pool.get("status", {}).get("readyReplicas") == 3
 
     def ready_sandbox_pods(self, count):
         sandboxes = self.objects("sandboxes", self.namespace)
@@ -494,7 +500,8 @@ class E2E(Healthcheck):
         if not name:
             raise CheckFailure("Ready SandboxClaim did not publish status.sandbox.name")
         sandbox = self.oc_json("get", "sandbox", name, "-n", self.namespace)
-        pods = self.wait("claimed sandbox pod and warm-pool replenishment", lambda: self.ready_sandbox_pods(4), timeout=300)
+        pods = self.wait("claimed sandbox pod and warm-pool replenishment",
+                         lambda: self.pool_ready() and self.ready_sandbox_pods(4), timeout=300)
         backing = [p for p in pods if any(o.get("uid") == sandbox["metadata"]["uid"] for o in p["metadata"].get("ownerReferences", []))]
         if len(backing) != 1:
             raise CheckFailure("Could not uniquely resolve the claimed sandbox's pod by owner reference")
