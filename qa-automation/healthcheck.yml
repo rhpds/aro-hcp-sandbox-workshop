@@ -96,13 +96,15 @@
       loop_control:
         label: "{{ item.name }}"
 
-    - name: Require a healthy workshop starting environment
-      ansible.builtin.assert:
-        that:
-          - healthcheck_report.healthy | bool
-        quiet: true
-        success_msg: "Workshop environment is ready. Kata and Agent Sandbox installation remain learner exercises."
-        fail_msg: >-
-          Environment is not ready. Failed checks:
-          {{ healthcheck_report.checks | rejectattr('passed') | map(attribute='name') | join(', ') }}.
-          See the FAIL results above; this healthcheck does not modify or repair the cluster.
+    - name: Report overall readiness without failing playbook execution
+      ansible.builtin.debug:
+        msg:
+          - >-
+            {{ 'PASS' if healthcheck_report.healthy else 'FAIL' }} | Overall readiness |
+            {{ healthcheck_report.checks | selectattr('passed') | list | length }} passed,
+            {{ healthcheck_report.checks | rejectattr('passed') | list | length }} failed.
+          - >-
+            {{ 'Workshop environment is ready. Kata and Agent Sandbox installation remain learner exercises.'
+               if healthcheck_report.healthy else
+               'Failed checks: ' ~ (healthcheck_report.checks | rejectattr('passed') | map(attribute='name') | join(', ')) ~
+               '. See the FAIL results above. Playbook execution completed; the environment is not ready.' }}

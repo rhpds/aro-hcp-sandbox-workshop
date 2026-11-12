@@ -85,9 +85,13 @@ For a manual run, supply a protected user-data file (do not commit it):
 ansible-playbook qa-automation/healthcheck.yml -e @/secure/path/user_data.yml
 ```
 
-The output lists every PASS/FAIL, then returns a nonzero Ansible exit code if
-any probe failed. Degraded operators are genuine failures, not ignored warnings.
-A healthy console HTTP endpoint alone does not establish cluster operator health.
+The output lists every PASS/FAIL and an overall PASS/FAIL summary with counts.
+Unhealthy checks do not fail playbook execution: Showroom's "Completed
+successfully" means the checks finished, not that the environment is healthy.
+Read the overall readiness summary to determine environment health. Missing
+required variables, SSH failures, or an invalid probe report still fail execution.
+Degraded operators remain FAIL results, not ignored warnings. A healthy console
+HTTP endpoint alone does not establish cluster operator health.
 
 Offline tests and syntax validation:
 
