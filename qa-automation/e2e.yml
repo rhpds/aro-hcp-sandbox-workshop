@@ -1,13 +1,118 @@
 ---
-# E2E — End-to-end test
-# Runs all module solve + validate sequences to verify the full lab
-# works from start to finish without manual intervention.
+# Mutating E2E workflow for a dedicated per-student workshop cluster.
+# Creates two Azure workers and installs workshop operators. Always attempts
+# cleanup of run-owned resources. Never runs reboot/crash sysrq commands.
 
-- name: "End-to-End Test"
+- name: Prepare the workshop E2E runner
   hosts: localhost
   connection: local
   gather_facts: false
   tasks:
-    - name: "TODO: Implement end-to-end test sequence"
+    - name: Validate required Showroom variables
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.vars', item, default='') | string | length > 0
+        quiet: true
+        fail_msg: "Required Showroom variable is missing: {{ item }}"
+      loop:
+        - aro_hcp_cluster_location
+        - aro_hcp_cluster_managed_rg
+        - aro_hcp_cluster_name
+        - aro_hcp_cluster_rg
+        - bastion_public_hostname
+        - bastion_ssh_user_name
+        - bastion_ssh_password
+        - keycloak_url
+        - openshift_admin_user
+        - openshift_admin_password
+        - openshift_api_url
+        - openshift_console_url
+
+    - name: Connect to the learner bastion
+      ansible.builtin.add_host:
+        name: workshop_e2e_bastion
+        groups: workshop_e2e
+        ansible_host: "{{ bastion_public_hostname }}"
+        ansible_port: "{{ bastion_ssh_port | default(22) }}"
+        ansible_user: "{{ bastion_ssh_user_name }}"
+        ansible_password: "{{ bastion_ssh_password }}"
+        ansible_connection: ssh
+        ansible_connect_timeout: 10
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
+      changed_when: false
+      no_log: true
+
+- name: Exercise and validate the workshop
+  hosts: workshop_e2e
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Create a private E2E run directory on the bastion
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: workshop-e2e-
+      register: e2e_directory
+
+    - name: Install the QA helpers in the private run directory
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/files/{{ item }}"
+        dest: "{{ e2e_directory.path }}/{{ item }}"
+        mode: "0600"
+      loop:
+        - healthcheck.py
+        - e2e.py
+
+    - name: Run E2E with bounded waits and cleanup (this can take 30-60 minutes)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ e2e_directory.path }}/e2e.py"
+          - "{{ e2e_directory.path }}"
+        stdin: >-
+          {{ {
+            'aro_hcp_cluster_location': aro_hcp_cluster_location,
+            'aro_hcp_cluster_managed_rg': aro_hcp_cluster_managed_rg,
+            'aro_hcp_cluster_name': aro_hcp_cluster_name,
+            'aro_hcp_cluster_rg': aro_hcp_cluster_rg,
+            'azure_subscription': azure_subscription | default(''),
+            'keycloak_url': keycloak_url,
+            'keycloak_realm': healthcheck_keycloak_realm | default('openshift'),
+            'keycloak_client_id': healthcheck_keycloak_client_id | default('openshift-console'),
+            'openshift_admin_user': openshift_admin_user,
+            'openshift_admin_password': openshift_admin_password,
+            'openshift_api_url': openshift_api_url,
+            'openshift_console_url': openshift_console_url,
+            'nodepool_timeout': e2e_nodepool_timeout | default(1200),
+            'operator_timeout': e2e_operator_timeout | default(600),
+            'kata_timeout': e2e_kata_timeout | default(900)
+          } | to_json }}
+      async: 10800
+      poll: 10
+      register: e2e_execution
+      failed_when: false
+      no_log: true
+
+    - name: Require a valid sanitized E2E report
+      ansible.builtin.assert:
+        that:
+          - e2e_execution.rc | default(-1) in [0, 1]
+          - e2e_execution.stdout | default('') is match('^\{')
+        quiet: true
+        fail_msg: >-
+          E2E execution did not produce a report. Inspect the private bastion
+          run directory {{ e2e_directory.path }} and state.json before retrying.
+
+    - name: Parse the E2E report
+      ansible.builtin.set_fact:
+        e2e_report: "{{ e2e_execution.stdout | from_json }}"
+
+    - name: Final E2E summary
       ansible.builtin.debug:
-        msg: "Replace this task with your e2e test implementation"
+        msg: "{{ summary.splitlines() | reject('equalto', '') | list }}"
+      vars:
+        summary: |-
+          {% for check in e2e_report.checks %}
+          {{ check.status }} | {{ check.name }} | {{ check.message.splitlines() | join(' ') }}
+          {% endfor %}
+          {{ 'PASS' if e2e_report.healthy else 'FAIL' }} | Overall E2E | {{ e2e_report.checks | selectattr('status', 'equalto', 'PASS') | list | length }} passed, {{ e2e_report.checks | selectattr('status', 'equalto', 'FAIL') | list | length }} failed, {{ e2e_report.checks | selectattr('status', 'equalto', 'SKIP') | list | length }} skipped.
+          INFO | Run artifacts | {{ e2e_directory.path }}/report.json and state.json on the bastion (no credentials stored).

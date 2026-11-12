@@ -101,5 +101,59 @@ python3 -m unittest discover -s qa-automation/tests -v
 ansible-playbook --syntax-check qa-automation/healthcheck.yml
 ```
 
-`e2e.yml` remains a placeholder; full installation and isolation exercises are
-outside the readiness healthcheck.
+## End-to-end workflow
+
+`e2e.yml` executes the installation, troubleshooting, isolation and Agent Sandbox
+exercises on a dedicated per-student lab. Trigger it with:
+
+```text
+https://<showroom-host>/stream/qa/e2e
+```
+
+It uses the same required Showroom variables as the healthcheck and the existing
+bastion Azure session/kubeconfig. Budget 30–60 minutes and Azure quota for **two
+additional Standard_D4s_v5 workers**. The Ansible task polls asynchronously every
+10 seconds while the bastion runs the workflow. Do not restart Showroom or launch
+a second test while a run is active. A bastion lock rejects concurrent E2E runs.
+
+Each run uses unique `qa-e2e-*` namespaces and a `qa-kata-*` NodePool/KataConfig.
+It refuses an existing KataConfig rather than changing participant state. A
+pre-existing matching operator can be reused, but is never patched or deleted.
+The test-installed OSC controller receives the ACR credential mount described in
+the content. Pre-existing cluster-operator degradation is reported independently
+and does not prevent the installation exercises from running.
+
+The final report gives one PASS/FAIL/SKIP line per stage and totals. Failed
+prerequisites produce explicit SKIP results, not false passes. Environment or
+exercise failures do not fail Ansible execution; an execution/reporting failure
+still does. Read the summary, not just Showroom's completion banner.
+
+### Safety and cleanup
+
+- Only the non-destructive sysrq help command (`h`) is permitted. No reboot,
+  crash, kernel-module insertion, host filesystem writes or exploits are run.
+- Privileged and hostPID pods are confined to the run's workload namespace.
+  Host debug pods run only read-only inspection commands on test-owned nodes.
+- Workers are checked for resource pressure and unexpected boot-ID changes.
+- A `finally` block attempts cleanup after success, failure or handled SIGTERM.
+  It removes run-created workloads, KataConfig, operator namespaces and NodePool.
+- Cluster-scoped operator API definitions (CRDs and RuntimeClasses) are retained
+  deliberately, rather than risking deletion of APIs used by concurrent learners.
+  Thus cleanup does not restore a byte-for-byte pristine cluster.
+- Run-owned state and sanitized reports remain in a private
+  `/tmp/workshop-e2e-*` directory on the bastion. `state.json` records intended
+  resource ownership **before** each create request. No credentials are stored in
+  these reports. Preserve this directory if cleanup fails.
+- SIGKILL, host loss or an expired administrative kubeconfig can prevent cleanup.
+  Inspect `state.json`, the named namespace/KataConfig, and the Azure NodePool
+  before manually removing only that run's resources or retrying.
+
+Optional wait settings: `e2e_nodepool_timeout` (1200 seconds),
+`e2e_operator_timeout` (600 seconds), and `e2e_kata_timeout` (900 seconds).
+Each API/CLI request is separately bounded. The overall Ansible async limit is
+three hours so normal waits and cleanup have time to finish.
+
+The infrastructure inventory check maps Azure VMs to Kubernetes workers; it does
+not claim that arbitrary disk or load-balancer names prove the absence of etcd
+or API-server infrastructure. Kernel version equality is allowed. Cross-tenant
+runc visibility is tested only with explicitly privileged hostPID pods.
