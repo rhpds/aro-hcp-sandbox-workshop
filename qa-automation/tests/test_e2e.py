@@ -174,6 +174,39 @@ class E2ETests(unittest.TestCase):
         mocks["cleanup"].assert_called_once()
         self.assertTrue((Path(self.directory.name) / "report.json").exists())
 
+    def test_known_console_degradation_is_skipped_and_overall_can_pass(self):
+        def fake_check(name, function):
+            if name == "Baseline cluster operators":
+                return {"passed": False,
+                        "message": "Unhealthy cluster operators: console (Degraded=True)"}
+            return {"passed": True, "message": "verified"}
+        with patch.object(self.runner, "run_check", side_effect=fake_check):
+            report = self.runner.run()
+        baseline = next(r for r in report["checks"] if r["key"] == "baseline")
+        self.assertEqual(baseline["status"], "SKIP")
+        self.assertIn("Known behaviour", baseline["message"])
+        self.assertTrue(report["healthy"])
+        saved = json.loads((Path(self.directory.name) / "report.json").read_text())
+        self.assertEqual(saved, report)
+
+    def test_other_operator_issues_still_fail(self):
+        for message in (
+            "Unhealthy cluster operators: authentication (Degraded=True)",
+            "Unhealthy cluster operators: console (Available=False, Degraded=True)",
+            "Unhealthy cluster operators: console (Degraded=True); ingress (Degraded=True)",
+            "oc request failed (exit 1)",
+        ):
+            with self.subTest(message=message):
+                def fail():
+                    raise MODULE.CheckFailure(message)
+                result = self.runner.result("baseline", "Baseline cluster operators", fail)
+                self.assertEqual(result["status"], "FAIL")
+                self.assertEqual(result["message"], message)
+
+    def test_healthy_baseline_operators_pass(self):
+        result = self.runner.result("baseline", "Baseline cluster operators", lambda: "healthy")
+        self.assertEqual(result["status"], "PASS")
+
     def test_interruption_still_runs_cleanup(self):
         with patch.object(self.runner, "preflight", side_effect=MODULE.AbortRun()), \
              patch.object(self.runner, "cleanup", return_value="cleaned") as cleanup:

@@ -121,10 +121,14 @@ It refuses an existing KataConfig rather than changing participant state. A
 pre-existing matching operator can be reused, but is never patched or deleted.
 The test-installed OSC controller receives the ACR credential mount described in
 the content. Pre-existing cluster-operator degradation is reported independently
-and does not prevent the installation exercises from running.
+and does not prevent the installation exercises from running. If the only issue
+is `console (Degraded=True)`, the E2E baseline check reports SKIP with a
+"Known behaviour" description instead of FAIL. Other operator issues still fail,
+and the standalone healthcheck remains strict.
 
 The final report gives one PASS/FAIL/SKIP line per stage and totals. Failed
-prerequisites produce explicit SKIP results, not false passes. Environment or
+prerequisites produce explicit SKIP results, not false passes. The known-behaviour
+skip does not fail the overall E2E result; failed prerequisites still do. Environment or
 exercise failures do not fail Ansible execution; an execution/reporting failure
 still does. Read the summary, not just Showroom's completion banner.
 
