@@ -101,7 +101,7 @@ development:
     ansible:
       status: complete
   e2e:
-    status: in_progress
+    status: complete
   healthCheck:
     status: complete
 
