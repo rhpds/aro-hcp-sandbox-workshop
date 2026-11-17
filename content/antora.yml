@@ -10,3 +10,6 @@ asciidoc:
     experimental: true
     page-pagination: true
     guid: '%GUID%'
+    ssh_user: lab-user
+    ssh_password: changeme
+    openshift_console_url: 'https://console-openshift-console.apps.%GUID%.example.com'
