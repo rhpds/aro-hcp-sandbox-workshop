@@ -16,3 +16,8 @@ ui:
 
 output:
   dir: ./www
+
+antora:
+  extensions:
+    - require: '@sntke/antora-mermaid-extension'
+    - require: '@andrew-jones/antora-tabs-extension'
