@@ -1,0 +1,188 @@
+= Conclusion and Next Steps
+
+You've reached the end of the ARO HCP and OpenShift Sandboxed Containers workshop.
+Over the past two hours you moved from inspecting an empty resource group to executing
+host-escape attempts inside a kata VM — and you observed exactly what happens at each layer.
+
+== What You've Learned
+
+* Verified ARO HCP's managed control plane model by inspecting the Azure resource group
+  and confirming the absence of customer-managed master VMs, etcd disks, and control
+  plane load balancers
+* Scaled a worker NodePool and traced the resulting Azure VM provisioning through the
+  Kubernetes declarative API
+* Deployed OpenShift Sandboxed Containers on a Kata-dedicated NodePool, including
+  operator installation and KataConfig configuration
+* Troubleshot Sandboxed Containers admission failures using pod events and
+  `oc adm policy who-can`
+* Proved kernel-level isolation between runc and kata pods through live kernel version
+  comparison and cross-tenant `/proc` inspection
+* Demonstrated host-escape containment by executing a sysrq trigger and kernel module
+  load attempts inside a kata workload
+* Explored the Red Hat Build of Agent Sandbox and saw how `SandboxTemplate`,
+  `SandboxWarmPool`, and `SandboxClaim` compose with the kata runtime to give platform
+  admins central control over AI agent isolation
+
+== Key Takeaways
+
+The control plane and the data plane have fundamentally different security boundaries in
+ARO HCP. The absence of master VMs and etcd disks in your resource group is not an
+oversight — it is the product. Red Hat manages that layer, Managed Identity and Workload
+Identity replace static credentials, and your compliance team gets documented evidence
+instead of contested assurances.
+
+Kata Containers move the isolation boundary from namespace to kernel. A `runc` container
+shares the host kernel; a `kata` pod runs inside a KVM guest VM. When you compared kernel
+versions across host, runc pod, and kata pod, those three different version strings were
+the evidence. Cross-tenant `/proc` inspection produced the same result: hard boundary
+versus soft boundary, side by side.
+
+Agent Sandbox composes with both. A single field — `runtimeClassName: kata` in a
+`SandboxTemplate` — is the platform admin's control point. Every `SandboxClaim` from
+that template gets VM-level isolation transparently, without developer involvement.
+
+== Field Takeaways
+
+=== When to Recommend Each Technology
+
+[cols="1,2,2",options="header"]
+|===
+| Situation | Recommendation | Key Signal
+
+| Compliance requirements prohibit customer-managed master nodes
+| ARO HCP
+| "Show me your master VMs" — empty resource group is the answer
+
+| Multi-tenant workloads with kernel-level isolation requirements
+| OpenShift Sandboxed Containers with kata RuntimeClass
+| Regulated industries: FSI, government, healthcare
+
+| AI agents executing tool calls or LLM-generated shell commands
+| Red Hat Build of Agent Sandbox + kata SandboxTemplate
+| Any platform running code interpreters or agentic workflows
+
+| Latency-sensitive or high-density workloads where nested-virt overhead matters
+| runc with namespace isolation
+| Benchmark first; kata adds cold-start latency without a warm pool
+|===
+
+=== Three Discovery Questions
+
+Use these in a customer meeting:
+
+. *"Do your compliance requirements prohibit customer-managed master nodes?"*
+  This opens the ARO HCP conversation. The managed control plane model and FSI/government
+  identity binding story follow naturally.
+
+. *"Do you run multi-tenant workloads where kernel-level isolation is a hard requirement?"*
+  Ask what their current isolation story is. Namespace isolation is usually the answer,
+  and that is a soft boundary.
+
+. *"Are you deploying AI agents that need sandboxed code execution?"*
+  This is the emerging conversation in regulated industries. Agent Sandbox combined with
+  OpenShift Sandboxed Containers gives platform teams a single API surface with
+  hardware-enforced isolation.
+
+== Next Steps
+
+=== Continue Learning
+
+* link:https://docs.openshift.com/container-platform/latest/sandboxed_containers/understanding-sandboxed-containers.html[OpenShift Sandboxed Containers Documentation^] —
+  Architecture, operator configuration, and troubleshooting reference
+* link:https://docs.openshift.com/container-platform/latest/hosted_control_planes/index.html[HyperShift / Hosted Control Planes Documentation^] —
+  HostedCluster and NodePool API reference
+* link:https://katacontainers.io/[Kata Containers Project^] —
+  Upstream architecture, threat model, and runtime comparisons
+* link:https://www.redhat.com/en/technologies/cloud-computing/openshift/sandboxed-containers[OpenShift Sandboxed Containers Product Page^] —
+  Use cases, supported platforms, and customer stories
+* link:https://learn.microsoft.com/en-us/cli/azure/[Azure CLI Reference^] —
+  Full command reference for `az vm`, `az network`, and `az identity`
+
+=== Practice Projects
+
+. *Automate NodePool scaling with KEDA:* Connect a custom metrics source to trigger
+  NodePool scale-out without manual `oc scale` commands and confirm VM creation in the
+  Azure resource group.
+
+. *Build a multi-tenant AI platform prototype:* Deploy two teams' AI workloads on the
+  same cluster using separate `SandboxTemplate` resources backed by the kata runtime class.
+  Repeat the cross-tenant `/proc` inspection to confirm isolation holds end-to-end.
+
+. *Extend the kata threat model to network:* Add a `NetworkPolicy` that restricts egress
+  from the kata namespace and verify it blocks outbound connections from inside the guest VM.
+
+== References
+
+=== Products and Technologies Used
+
+* link:https://docs.microsoft.com/en-us/azure/openshift/[Azure Red Hat OpenShift (ARO)^]
+* link:https://docs.openshift.com/container-platform/latest/hosted_control_planes/index.html[HyperShift / Hosted Control Planes^]
+* link:https://docs.openshift.com/container-platform/latest/sandboxed_containers/understanding-sandboxed-containers.html[OpenShift Sandboxed Containers^]
+* link:https://katacontainers.io/[Kata Containers^]
+* link:https://learn.microsoft.com/en-us/cli/azure/[Azure CLI^]
+
+=== Kubernetes and OpenShift APIs Referenced
+
+[cols="1,2",options="header"]
+|===
+| Resource | API Group
+
+| `HostedCluster`
+| `hypershift.openshift.io/v1beta1`
+
+| `NodePool`
+| `hypershift.openshift.io/v1beta1`
+
+| `KataConfig`
+| `kataconfiguration.openshift.io/v1`
+
+| `RuntimeClass`
+| `node.k8s.io/v1`
+
+| `MachineConfigPool`
+| `machineconfiguration.openshift.io/v1`
+
+| `SandboxTemplate`
+| `extensions.agents.x-k8s.io/v1beta1`
+
+| `SandboxWarmPool`
+| `extensions.agents.x-k8s.io/v1beta1`
+
+| `SandboxClaim`
+| `extensions.agents.x-k8s.io/v1beta1`
+
+| `Sandbox`
+| `extensions.agents.x-k8s.io/v1beta1`
+|===
+
+=== Key Commands from This Workshop
+
+[source,bash]
+----
+# Confirm no master VMs in the ARO HCP resource group
+az vm list -g $RESOURCEGROUP --query "[].name" -o tsv
+
+# Scale a NodePool
+oc scale nodepool kata-pool -n clusters --replicas=2
+
+# Apply KataConfig to install the kata runtime on the dedicated node pool
+oc apply -f kataconfig.yaml
+oc wait kataconfig example-kataconfig \
+  --for=condition=InProgress=false --timeout=1200s
+
+# Three-way kernel comparison (host, runc, kata)
+oc debug node/$NODE_NAME -- chroot /host uname -r
+oc exec -n isolation-test $RUNC_POD -- uname -r
+oc exec -n isolation-test $KATA_POD -- uname -r
+
+# Request an Agent Sandbox via SandboxClaim
+oc apply -f sandboxclaim.yaml
+oc wait sandboxclaim agent-session-01 \
+  -n agent-sandbox --for=condition=Ready --timeout=60s
+----
+
+---
+
+*Workshop:* ARO HCP and OpenShift Sandboxed Containers: Control Plane and Kernel Isolation +
+*Completed:* {localdate} +
+*Platform:* Red Hat Showroom
