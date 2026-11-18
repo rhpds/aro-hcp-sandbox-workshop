@@ -67,6 +67,72 @@ class ReadinessTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertIn("console (Degraded=True)", result["message"])
 
+    def console_operator(self):
+        return {"metadata": {"name": "console"}, "status": {"conditions": [
+            {"type": "Available", "status": "True"},
+            {"type": "Progressing", "status": "False"},
+            {"type": "Degraded", "status": "True",
+             "reason": "OAuthClientSecretSync_FailedClientSecretGet",
+             "message": 'OAuthClientSecretSyncDegraded: secret "keycloak-console-openshift-console" not found'},
+        ]}}
+
+    def test_known_console_issue_is_visible_warning_for_workshop_only(self):
+        with patch.object(self.check, "oc_json", return_value={"items": [self.console_operator()]}):
+            result = self.check.run_check(
+                "Cluster operators", lambda: self.check.operators(workshop_readiness=True))
+            self.assertTrue(result["passed"])
+            self.assertEqual(result["status"], "WARN")
+            self.assertIn("openshift-config", result["message"])
+            with self.assertRaises(MODULE.CheckFailure):
+                self.check.operators()
+
+    def test_other_operator_issues_are_not_downgraded(self):
+        for change in ("unavailable", "progressing", "unknown_reason", "other_message",
+                       "missing_condition", "other_operator", "additional_operator"):
+            with self.subTest(change=change):
+                console = self.console_operator()
+                conditions = console["status"]["conditions"]
+                operators = [console]
+                if change == "unavailable":
+                    conditions[0]["status"] = "False"
+                elif change == "progressing":
+                    conditions[1]["status"] = "True"
+                elif change == "unknown_reason":
+                    conditions[2]["reason"] = "OtherFailure"
+                elif change == "other_message":
+                    conditions[2]["message"] += "; another controller failed"
+                elif change == "missing_condition":
+                    conditions.pop(0)
+                elif change == "other_operator":
+                    console["metadata"]["name"] = "authentication"
+                else:
+                    other = self.console_operator()
+                    other["metadata"]["name"] = "ingress"
+                    operators.append(other)
+                with patch.object(self.check, "oc_json", return_value={"items": operators}):
+                    with self.assertRaises(MODULE.CheckFailure):
+                        self.check.operators(workshop_readiness=True)
+
+    def test_known_warning_requires_console_and_learner_login(self):
+        for failed_probe in (None, "OpenShift console", "Learner authentication and authorization"):
+            with self.subTest(failed_probe=failed_probe):
+                def fake_probe(name, function):
+                    if name == "Cluster operators":
+                        return {"name": name, "passed": True, "status": "WARN", "message": "known issue"}
+                    return {"name": name, "passed": name != failed_probe, "message": "test"}
+                with patch.object(self.check, "run_check", side_effect=fake_probe):
+                    report = self.check.run()
+                operator = next(c for c in report["checks"] if c["name"] == "Cluster operators")
+                self.assertEqual(report["healthy"], failed_probe is None)
+                self.assertEqual(operator["status"], "WARN" if failed_probe is None else "FAIL")
+                self.assertEqual(operator["passed"], failed_probe is None)
+
+    def test_healthy_operators_still_pass(self):
+        operator = self.console_operator()
+        operator["status"]["conditions"][2] = {"type": "Degraded", "status": "False"}
+        with patch.object(self.check, "oc_json", return_value={"items": [operator]}):
+            self.assertIn("non-degraded", self.check.operators(workshop_readiness=True))
+
     def test_default_nodepool_alone_is_sufficient(self):
         with patch.object(self.check, "az", return_value=[{
             "name": "default", "properties": {"provisioningState": "Succeeded"},
