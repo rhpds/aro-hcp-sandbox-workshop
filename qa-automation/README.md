@@ -14,7 +14,8 @@ Checks cover:
 - Existing Azure login, resource groups, cluster region/provisioning, and NodePools.
 - Bastion kubeconfig target, API readiness, and administrative permissions.
 - At least two Ready, uncordoned workers without resource pressure.
-- All cluster operators Available, non-Degraded, and not Progressing.
+- All cluster operators Available, non-Degraded, and not Progressing, with the
+  narrowly scoped console warning described below.
 - Red Hat operator catalog and the workshop's required package channels.
 - Console HTTPS access and cluster OIDC discovery.
 - Actual learner Keycloak authentication and API authorization, separately from
@@ -86,13 +87,22 @@ ansible-playbook qa-automation/healthcheck.yml -e @/secure/path/user_data.yml
 ```
 
 The final summary groups all results together: one line per check containing
-PASS/FAIL, its name, and a short detail, followed by overall PASS/FAIL and counts.
+PASS/WARN/FAIL, its name, and a short detail, followed by overall PASS/FAIL and
+separate passed, warning, and failed counts. Warnings do not block workshop readiness.
 Unhealthy checks do not fail playbook execution: Showroom's "Completed
 successfully" means the checks finished, not that the environment is healthy.
 Read the overall readiness summary to determine environment health. Missing
 required variables, SSH failures, or an invalid probe report still fail execution.
-Degraded operators remain FAIL results, not ignored warnings. A healthy console
-HTTP endpoint alone does not establish cluster operator health.
+Degraded operators remain FAIL results except for the confirmed ARO HCP Keycloak
+secret-sync issue: the console must be Available=True and Progressing=False, with
+Degraded=True, reason `OAuthClientSecretSync_FailedClientSecretGet`, and exactly
+`OAuthClientSecretSyncDegraded: secret "keycloak-console-openshift-console" not found`.
+Only that condition becomes a visible WARN, and only when both the console HTTPS
+and learner authentication/authorization probes pass. Other operator issues,
+missing conditions, different reasons/messages, and failed login/access remain
+FAIL. This exception measures workshop usability, not full cluster health: the
+missing secret in `openshift-config` remains a provisioning issue. No cluster
+configuration is changed by the healthcheck.
 
 Offline tests and syntax validation:
 
@@ -124,7 +134,8 @@ the content. Pre-existing cluster-operator degradation is reported independently
 and does not prevent the installation exercises from running. If the only issue
 is `console (Degraded=True)`, the E2E baseline check reports SKIP with a
 "Known behaviour" description instead of FAIL. Other operator issues still fail,
-and the standalone healthcheck remains strict.
+while the standalone healthcheck uses the narrower reason/message and functional
+access gates described above. The E2E baseline policy is unchanged.
 
 The final report gives one PASS/FAIL/SKIP line per stage and totals. Failed
 prerequisites produce explicit SKIP results, not false passes. The known-behaviour

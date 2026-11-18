@@ -19,6 +19,10 @@ class CheckFailure(Exception):
     """A safe, deliberately curated diagnostic suitable for Showroom output."""
 
 
+class CheckWarning(Exception):
+    """A known, non-blocking workshop issue that must remain visible."""
+
+
 class Healthcheck:
     def __init__(self, config):
         self.config = config
@@ -147,21 +151,37 @@ class Healthcheck:
                 raise CheckFailure("Unexpected non-worker node in customer inventory: " + name)
         return str(len(nodes)) + " workers are Ready, uncordoned and free of pressure"
 
-    def operators(self):
+    def operators(self, workshop_readiness=False):
         operators = self.oc_json("get", "clusteroperators")["items"]
         if not operators:
             raise CheckFailure("No cluster operator status objects were returned")
         unhealthy = []
+        known_console_issue = False
         for operator in operators:
             conditions = {c["type"]: c["status"] for c in operator["status"]["conditions"]}
             bad = [key + "=" + str(conditions.get(key, "Missing"))
                    for key, expected in (("Available", "True"), ("Degraded", "False"),
                                          ("Progressing", "False"))
                    if conditions.get(key) != expected]
-            if bad:
+            degraded = next((c for c in operator["status"]["conditions"]
+                             if c["type"] == "Degraded"), {})
+            # Only the confirmed ARO HCP/Keycloak secret-sync issue is eligible.
+            # Keep operators() strict by default for existing callers (E2E).
+            if (workshop_readiness and operator["metadata"]["name"] == "console"
+                    and bad == ["Degraded=True"]
+                    and degraded.get("reason") == "OAuthClientSecretSync_FailedClientSecretGet"
+                    and degraded.get("message") == 'OAuthClientSecretSyncDegraded: secret "keycloak-console-openshift-console" not found'):
+                known_console_issue = True
+            elif bad:
                 unhealthy.append(operator["metadata"]["name"] + " (" + ", ".join(bad) + ")")
         if unhealthy:
             raise CheckFailure("Unhealthy cluster operators: " + "; ".join(unhealthy))
+        if known_console_issue:
+            raise CheckWarning(
+                "Known ARO HCP behaviour: console is Available but Degraded because "
+                "keycloak-console-openshift-console is missing from openshift-config; "
+                "workshop readiness requires passing console HTTPS and learner login checks"
+            )
         return "All cluster operators are available, non-degraded and stable"
 
     def catalog(self):
@@ -237,6 +257,8 @@ class Healthcheck:
     def run_check(self, name, function):
         try:
             return {"name": name, "passed": True, "message": function()}
+        except CheckWarning as error:
+            return {"name": name, "passed": True, "status": "WARN", "message": str(error)}
         except CheckFailure as error:
             message = str(error)
         except urllib.error.HTTPError as error:
@@ -256,7 +278,7 @@ class Healthcheck:
             ("Existing NodePools", self.nodepools),
             ("Bastion OpenShift access", self.bastion_access),
             ("Worker readiness", self.workers),
-            ("Cluster operators", self.operators),
+            ("Cluster operators", lambda: self.operators(workshop_readiness=True)),
             ("Operator catalog", self.catalog),
             ("Sandboxed Containers package", lambda: self.package("sandboxed-containers-operator", "stable")),
             ("Agent Sandbox package", lambda: self.package("agent-sandbox-operator", "preview-0.9")),
@@ -270,6 +292,15 @@ class Healthcheck:
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(probes)) as pool:
             futures = [pool.submit(self.run_check, name, function) for name, function in probes]
             checks = [future.result() for future in futures]
+        by_name = {check["name"]: check for check in checks}
+        operators = by_name["Cluster operators"]
+        if (operators.get("status") == "WARN" and not all(
+                by_name[name]["passed"] for name in
+                ("OpenShift console", "Learner authentication and authorization"))):
+            operators.update(passed=False, status="FAIL", message=(
+                "Console operator is Degraded and console HTTPS or learner login failed; "
+                "the known secret-sync issue cannot be treated as non-blocking"
+            ))
         return {"checks": checks, "healthy": all(check["passed"] for check in checks)}
 
 

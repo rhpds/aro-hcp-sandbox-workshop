@@ -95,6 +95,7 @@
       vars:
         readiness_summary: |-
           {% for check in healthcheck_report.checks %}
-          {{ 'PASS' if check.passed else 'FAIL' }} | {{ check.name }} | {{ check.message.splitlines() | join(' ') }}
+          {{ check.status | default('PASS' if check.passed else 'FAIL') }} | {{ check.name }} | {{ check.message.splitlines() | join(' ') }}
           {% endfor %}
-          {{ 'PASS' if healthcheck_report.healthy else 'FAIL' }} | Overall readiness | {{ healthcheck_report.checks | selectattr('passed') | list | length }} passed, {{ healthcheck_report.checks | rejectattr('passed') | list | length }} failed.
+          {% set warnings = healthcheck_report.checks | selectattr('status', 'defined') | selectattr('status', 'equalto', 'WARN') | list | length %}
+          {{ 'PASS' if healthcheck_report.healthy else 'FAIL' }} | Overall readiness | {{ (healthcheck_report.checks | selectattr('passed') | list | length) - warnings }} passed, {{ warnings }} warnings, {{ healthcheck_report.checks | rejectattr('passed') | list | length }} failed.
